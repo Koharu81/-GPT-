@@ -1,4 +1,4 @@
-import { float, index, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { boolean, float, index, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -75,6 +75,34 @@ export const apiUsageLogs = mysqlTable("apiUsageLogs", {
   index("apiUsageLogs_userId_idx").on(table.userId),
 ]);
 
+export const chatHistory = mysqlTable("chatHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  role: mysqlEnum("role", ["user", "assistant"]).notNull(),
+  content: text("content").notNull(),
+  mode: varchar("mode", { length: 40 }),
+  modelVersion: varchar("modelVersion", { length: 80 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("chatHistory_userId_createdAt_idx").on(table.userId, table.createdAt)]);
+
+export const modelVersions = mysqlTable("modelVersions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  version: varchar("version", { length: 80 }).notNull(),
+  label: varchar("label", { length: 120 }).notNull(),
+  description: text("description"),
+  datasetRecords: int("datasetRecords").default(0).notNull(),
+  requestedSteps: int("requestedSteps").default(0).notNull(),
+  parameterCount: int("parameterCount").default(0).notNull(),
+  trainLoss: float("trainLoss"),
+  validationLoss: float("validationLoss"),
+  artifactPath: varchar("artifactPath", { length: 500 }),
+  isActive: boolean("isActive").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("modelVersions_userId_createdAt_idx").on(table.userId, table.createdAt)]);
+
 export type TrainingPair = typeof trainingPairs.$inferSelect;
 export type TrainingRun = typeof trainingRuns.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
+export type ChatHistoryEntry = typeof chatHistory.$inferSelect;
+export type ModelVersion = typeof modelVersions.$inferSelect;

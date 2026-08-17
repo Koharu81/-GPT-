@@ -17,10 +17,20 @@ export const studioRouter = router({
       .input(z.object({ message: z.string().trim().min(1).max(4000) }))
       .mutation(async ({ ctx, input }) => {
         const pairs = await db.listApprovedPairs(ctx.user.id);
-        return {
-          reply: replyFromLearningPairs(input.message, pairs),
-          mode: "local-data" as const,
-        };
+        const reply = replyFromLearningPairs(input.message, pairs);
+        const mode = "local-data" as const;
+        await db.recordChatExchange({ userId: ctx.user.id, message: input.message, reply, mode });
+        return { reply, mode };
+      }),
+    history: protectedProcedure
+      .input(z.object({ query: z.string().trim().max(200).optional() }).optional())
+      .query(({ ctx, input }) => input?.query ? db.searchChatHistory(ctx.user.id, input.query) : db.listChatHistory(ctx.user.id)),
+    reuseHistory: protectedProcedure
+      .input(z.object({ historyId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const draft = await db.reuseHistoryAsTrainingDraft(ctx.user.id, input.historyId);
+        if (!draft) throw new TRPCError({ code: "BAD_REQUEST", message: "재사용할 대화 쌍을 찾을 수 없습니다." });
+        return { success: true, draft };
       }),
   }),
   trainingData: router({
@@ -72,6 +82,21 @@ export const studioRouter = router({
           success: true,
           note: "학습 요청을 기록했습니다. Windows 로컬 런처가 이 요청을 실제 PyTorch 학습으로 실행합니다.",
         } as const;
+      }),
+  }),
+  models: router({
+    list: protectedProcedure.query(({ ctx }) => db.listModelVersions(ctx.user.id)),
+    compare: protectedProcedure
+      .input(z.object({ leftId: z.number().int().positive(), rightId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        const result = await db.compareModelVersions(ctx.user.id, input.leftId, input.rightId);
+        if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "비교할 모델 버전을 찾을 수 없습니다." });
+        return result;
+      }),
+    comparePrompt: protectedProcedure
+      .input(z.object({ leftId: z.number().int().positive(), rightId: z.number().int().positive(), message: z.string().trim().min(1).max(4000) }))
+      .query(() => {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "체크포인트별 실제 응답 비교는 Windows 로컬 Mirae AI Studio에서 제공됩니다." });
       }),
   }),
   apiKeys: router({

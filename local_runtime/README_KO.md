@@ -77,3 +77,31 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat/completions \
 ## 7. 데이터 원칙
 
 대화 기록, 개인정보, 저작권 제한 자료를 본인 또는 작성자의 명시적 동의 없이 학습 데이터에 넣지 마세요. 스타터 대화는 프로젝트 자체 작성 자료이며, 일반 사용자의 후기·평가·증언을 흉내 내거나 포함하지 않습니다.
+
+## 8. 확장 모델과 버전 비교
+
+이번 패키지는 두 개의 직접 학습 모델 버전을 포함합니다. 첫 모델은 30개 스타터 대화로 500스텝을 학습했고, 두 번째 모델은 기존 30개와 추가로 작성한 75개 대화를 합친 **105개 대화 쌍**으로 2,000스텝을 학습했습니다. 두 번째 모델은 약 66만 8천 개 파라미터이며, 학습 로그 기준 마지막 학습 손실은 1.1908, 검증 손실은 2.8705였습니다. 검증 손실은 800스텝 부근에서 가장 낮았으므로, 다음 학습에서는 더 다양한 데이터를 추가하고 800–1,200스텝 구간도 함께 비교하는 편이 좋습니다.
+
+대화 요청은 `chat_history`에 사용자·어시스턴트 쌍으로 저장됩니다. `GET /api/history?query=단어`로 검색할 수 있으며, `GET /api/models`와 `GET /api/models/compare?left=1&right=2`로 모델 메타데이터와 손실·데이터 수 차이를 확인할 수 있습니다.
+
+대화 기록은 `POST /api/history/{history_id}/reuse`로 **검토용 학습 초안**에 다시 넣을 수 있습니다. 초안은 곧바로 학습하지 않으므로 학습 데이터 화면에서 문장을 확인한 뒤 승인하세요. 두 버전에 같은 질문을 보낼 때는 `POST /api/models/respond`에 `left`, `right`, `message`를 보내면 각 체크포인트의 응답을 나란히 받을 수 있습니다.
+
+## 9. TypeScript와 Python SDK
+
+`sdk/` 폴더에는 외부 의존성이 없는 API 클라이언트 라이브러리와 예제가 포함됩니다.
+
+```ts
+import { MiraeClient } from "./sdk/typescript/src/index.js";
+
+const mirae = new MiraeClient({ apiKey: "YOUR_MIRAE_API_KEY" });
+console.log(await mirae.reply("안녕하세요. Hello!"));
+```
+
+```python
+from mirae_ai import MiraeClient
+
+mirae = MiraeClient(api_key="YOUR_MIRAE_API_KEY")
+print(mirae.reply("안녕하세요. Hello!"))
+```
+
+TypeScript SDK는 `sdk/typescript`에서 `pnpm install`, `pnpm check`, `pnpm test`를 실행할 수 있습니다. Python SDK는 `sdk/python`에서 `PYTHONPATH=. pytest -q tests/test_client.py`로 검증할 수 있습니다. 두 SDK 모두 `POST /api/v1/chat/completions`에 Bearer API 키를 보내며, 키나 대화 내용을 외부 AI 서비스로 전달하지 않습니다.

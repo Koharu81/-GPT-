@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { apiKeys, apiUsageLogs, InsertUser, trainingPairs, trainingRuns, users } from "../drizzle/schema";
+import { apiKeys, apiUsageLogs, chatHistory, InsertUser, modelVersions, trainingPairs, trainingRuns, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { createRawApiKey, hashApiKey } from "./studio/security";
 
@@ -155,6 +155,53 @@ export async function createTrainingRun(userId: number, requestedSteps: number) 
     status: "queued",
     note: "Windows 로컬 런처가 실제 학습을 시작할 때까지 대기 중입니다.",
   });
+}
+
+export async function recordChatExchange(input: { userId: number; message: string; reply: string; mode: string; modelVersion?: string }) {
+  const db = await requireDb();
+  await db.insert(chatHistory).values([
+    { userId: input.userId, role: "user", content: input.message, modelVersion: input.modelVersion },
+    { userId: input.userId, role: "assistant", content: input.reply, mode: input.mode, modelVersion: input.modelVersion },
+  ]);
+}
+
+export async function listChatHistory(userId: number, limit = 80) {
+  const db = await requireDb();
+  return db.select().from(chatHistory).where(eq(chatHistory.userId, userId)).orderBy(desc(chatHistory.createdAt)).limit(limit);
+}
+
+export async function searchChatHistory(userId: number, query: string, limit = 40) {
+  const db = await requireDb();
+  const phrase = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
+  return db.select().from(chatHistory).where(and(eq(chatHistory.userId, userId), like(chatHistory.content, phrase))).orderBy(desc(chatHistory.createdAt)).limit(limit);
+}
+
+export async function reuseHistoryAsTrainingDraft(userId: number, historyId: number) {
+  const db = await requireDb();
+  const selected = (await db.select().from(chatHistory).where(and(eq(chatHistory.userId, userId), eq(chatHistory.id, historyId))).limit(1))[0];
+  if (!selected) return undefined;
+  const counterpart = selected.role === "user"
+    ? (await db.select().from(chatHistory).where(and(eq(chatHistory.userId, userId), eq(chatHistory.role, "assistant"), gt(chatHistory.id, selected.id))).orderBy(asc(chatHistory.id)).limit(1))[0]
+    : (await db.select().from(chatHistory).where(and(eq(chatHistory.userId, userId), eq(chatHistory.role, "user"), lt(chatHistory.id, selected.id))).orderBy(desc(chatHistory.id)).limit(1))[0];
+  if (!counterpart) return undefined;
+  const prompt = selected.role === "user" ? selected.content : counterpart.content;
+  const response = selected.role === "assistant" ? selected.content : counterpart.content;
+  await db.insert(trainingPairs).values({ userId, prompt, response, language: "mixed", status: "draft", source: "manual" });
+  return { prompt, response };
+}
+
+export async function listModelVersions(userId: number) {
+  const db = await requireDb();
+  return db.select().from(modelVersions).where(eq(modelVersions.userId, userId)).orderBy(desc(modelVersions.createdAt));
+}
+
+export async function compareModelVersions(userId: number, leftId: number, rightId: number) {
+  const db = await requireDb();
+  const records = await db.select().from(modelVersions).where(and(eq(modelVersions.userId, userId), or(eq(modelVersions.id, leftId), eq(modelVersions.id, rightId))));
+  const left = records.find(record => record.id === leftId);
+  const right = records.find(record => record.id === rightId);
+  if (!left || !right) return undefined;
+  return { left, right, deltas: { trainLoss: (right.trainLoss ?? 0) - (left.trainLoss ?? 0), validationLoss: (right.validationLoss ?? 0) - (left.validationLoss ?? 0), datasetRecords: right.datasetRecords - left.datasetRecords, requestedSteps: right.requestedSteps - left.requestedSteps } };
 }
 
 export async function createApiKey(userId: number, name: string) {

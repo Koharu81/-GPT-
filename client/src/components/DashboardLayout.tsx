@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
-  Activity, Bot, Database, KeyRound, LayoutDashboard, LogOut, Menu, MessageCircle,
+  Activity, Bot, Database, GitCompareArrows, History, KeyRound, LayoutDashboard, LogOut, Menu, MessageCircle,
   PanelLeft, Shield, Sparkles,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
@@ -15,8 +15,10 @@ import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, Si
 const baseMenuItems = [
   { icon: LayoutDashboard, label: "스튜디오", path: "/studio/chat" },
   { icon: MessageCircle, label: "대화", path: "/studio/chat" },
+  { icon: History, label: "대화 기록", path: "/studio/history" },
   { icon: Database, label: "학습 데이터", path: "/studio/data" },
   { icon: Activity, label: "학습 모니터", path: "/studio/training" },
+  { icon: GitCompareArrows, label: "모델 버전", path: "/studio/models" },
   { icon: KeyRound, label: "API 키", path: "/studio/keys" },
 ];
 

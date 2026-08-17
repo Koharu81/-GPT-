@@ -11,6 +11,8 @@ import TrainingData from "./pages/TrainingData";
 import Training from "./pages/Training";
 import ApiKeys from "./pages/ApiKeys";
 import Admin from "./pages/Admin";
+import ConversationHistory from "./pages/ConversationHistory";
+import ModelVersions from "./pages/ModelVersions";
 
 const studioPage = (Page: React.ComponentType) => () => <StudioShell><Page /></StudioShell>;
 
@@ -20,8 +22,10 @@ function Router() {
     <Switch>
       <Route path={"/"} component={Home} />
       <Route path={"/studio/chat"} component={studioPage(StudioChat)} />
+      <Route path={"/studio/history"} component={studioPage(ConversationHistory)} />
       <Route path={"/studio/data"} component={studioPage(TrainingData)} />
       <Route path={"/studio/training"} component={studioPage(Training)} />
+      <Route path={"/studio/models"} component={studioPage(ModelVersions)} />
       <Route path={"/studio/keys"} component={studioPage(ApiKeys)} />
       <Route path={"/studio/admin"} component={studioPage(Admin)} />
       <Route path={"/404"} component={NotFound} />

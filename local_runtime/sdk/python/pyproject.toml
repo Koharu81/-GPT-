@@ -1,0 +1,8 @@
+[project]
+name = "mirae-ai-local"
+version = "0.2.0"
+description = "Dependency-free Python client for Mirae AI Studio Local."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
