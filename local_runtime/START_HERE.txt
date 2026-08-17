@@ -1,0 +1,11 @@
+MIRAE AI STUDIO LOCAL — START HERE
+
+1) Extract this folder to: C:\Users\L\Downloads\AI
+2) Double-click run_mirae.bat
+3) Wait for the browser to open at http://127.0.0.1:8000
+4) Create your first local administrator account.
+5) Open "학습 데이터" and click "스타터 30쌍".
+6) Add your own conversation pairs, then open "학습 관찰" to train.
+
+The server only listens on your computer. Keep the black launcher window open while using Mirae AI Studio.
+See README_KO.md for API examples and security notes.

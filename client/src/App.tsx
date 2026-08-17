@@ -5,12 +5,25 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import StudioShell from "./pages/StudioShell";
+import StudioChat from "./pages/StudioChat";
+import TrainingData from "./pages/TrainingData";
+import Training from "./pages/Training";
+import ApiKeys from "./pages/ApiKeys";
+import Admin from "./pages/Admin";
+
+const studioPage = (Page: React.ComponentType) => () => <StudioShell><Page /></StudioShell>;
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
       <Route path={"/"} component={Home} />
+      <Route path={"/studio/chat"} component={studioPage(StudioChat)} />
+      <Route path={"/studio/data"} component={studioPage(TrainingData)} />
+      <Route path={"/studio/training"} component={studioPage(Training)} />
+      <Route path={"/studio/keys"} component={studioPage(ApiKeys)} />
+      <Route path={"/studio/admin"} component={studioPage(Admin)} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
@@ -27,7 +40,7 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider
-        defaultTheme="light"
+        defaultTheme="dark"
         // switchable
       >
         <TooltipProvider>

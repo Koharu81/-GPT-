@@ -1,33 +1,14 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { Streamdown } from 'streamdown';
+import { startLogin } from "@/const";
+import { ArrowUpRight, BrainCircuit, Database, KeyRound, Sparkles } from "lucide-react";
+import { useLocation } from "wouter";
 
-/**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
- */
+const features = [{ icon: MessageCircle, title: "대화의 결", text: "한국어와 English가 자연스럽게 섞인, 당신만의 언어를 배웁니다." }, { icon: Database, title: "기억의 재료", text: "대화 쌍을 직접 만들고 JSONL로 내보내며 학습의 뿌리를 관리합니다." }, { icon: KeyRound, title: "나만의 관문", text: "직접 발급한 API 키로 게임, 앱, 실험에 AI를 연결합니다." }];
+function MessageCircle(props: React.ComponentProps<typeof Sparkles>) { return <BrainCircuit {...props} />; }
+
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
-
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
-
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
-  );
+  const { user, loading } = useAuth(); const [, setLocation] = useLocation();
+  const enter = () => { if (user) setLocation("/studio/chat"); else startLogin(); };
+  return <div className="mirae-home min-h-screen overflow-hidden bg-[#100722] text-white"><header className="relative z-10 flex items-center justify-between px-6 py-6 md:px-10"><div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-full border border-white/20 bg-white/10"><Sparkles className="size-4 text-teal-200" /></div><span className="text-sm font-semibold tracking-[0.18em]">MIRAE AI STUDIO</span></div><p className="max-w-[260px] text-right text-xs leading-5 text-violet-100/75">Build a small intelligence<br />that feels unmistakably yours.</p></header><main className="relative min-h-[calc(100vh-88px)] px-6 pb-12 md:px-10"><div className="absolute -left-32 bottom-0 size-[38rem] rounded-full bg-violet-600/35 blur-[130px]" /><div className="absolute right-0 top-16 size-[32rem] rounded-full bg-teal-400/20 blur-[130px]" /><div className="relative grid min-h-[calc(100vh-140px)] items-end gap-12 lg:grid-cols-[1.1fr_.9fr]"><div className="pb-8"><p className="mirae-kicker">PERSONAL INTELLIGENCE, MADE SLOWLY</p><h1 className="mt-5 max-w-4xl text-balance text-[clamp(4rem,10vw,9rem)] font-black leading-[.84] tracking-[-.075em]">나만의 AI를<br /><span className="text-teal-200">직접 만든다.</span></h1><div className="mt-10 flex flex-wrap items-center gap-4"><Button onClick={enter} disabled={loading} className="h-13 rounded-full bg-white px-6 text-base font-semibold text-[#130828] hover:bg-teal-100">{user ? "내 스튜디오 열기" : "나의 AI 시작하기"}<ArrowUpRight className="ml-2 size-4" /></Button><span className="text-xs text-violet-100/70">외부 추론 API 없이 · 당신의 데이터로</span></div></div><div className="mb-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">{features.map(feature => <article key={feature.title} className="group rounded-2xl border border-white/12 bg-white/[0.055] p-5 backdrop-blur-xl transition duration-200 hover:-translate-y-1 hover:bg-white/[0.085]"><feature.icon className="size-5 text-teal-200" /><h2 className="mt-6 text-lg font-semibold">{feature.title}</h2><p className="mt-2 text-sm leading-6 text-violet-100/70">{feature.text}</p></article>)}</div></div></main></div>;
 }
