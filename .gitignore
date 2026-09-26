@@ -112,3 +112,15 @@ temp/
 # Manus version file (auto-generated, not part of source)
 client/public/__manus__/version.json
 .project-config.json
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Local Mirae runtime artifacts and secrets
+local_runtime/data/
+local_runtime/artifacts/
+local_runtime/models/
+Mirae_AI_Studio_Local/data/
+Mirae_AI_Studio_Local/artifacts/
+Mirae_AI_Studio_Local/models/

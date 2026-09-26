@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mirae AI</title>
+<style>
+:root{--bg:#fff;--panel:#f7f7f8;--text:#1f1f1f;--muted:#6b6b6b;--line:#e6e6e6;--accent:#111}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button,textarea{font:inherit}
+button{cursor:pointer}
+.app{min-height:100vh;display:flex;flex-direction:column}
+.topbar{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(18px);z-index:5}
+.brand{font-weight:750;font-size:17px;letter-spacing:-.03em}
+.top-actions{display:flex;gap:8px}
+.icon{width:36px;height:36px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.main{width:min(900px,calc(100% - 32px));margin:0 auto;flex:1;display:flex;flex-direction:column}
+.hero{padding:76px 0 28px}
+.hero h1{font-size:44px;letter-spacing:-.055em;margin:0 0 10px;font-weight:760}
+.hero p{color:var(--muted);margin:0}
+.suggestions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:28px 0 24px}
+.suggestion{padding:15px 17px;text-align:left;border:1px solid var(--line);border-radius:14px;background:#fff;transition:.15s}
+.suggestion:hover{background:#f7f7f7;border-color:#d5d5d5;transform:translateY(-1px)}
+.messages{flex:1;padding:8px 0 160px}
+.message{display:flex;gap:14px;padding:24px 0;border-bottom:1px solid transparent}
+.message.user{justify-content:flex-end}
+.bubble{max-width:78%;white-space:pre-wrap}
+.user .bubble{background:#f1f1f1;border-radius:18px;padding:11px 15px}
+.assistant .bubble{max-width:85%}
+.meta{font-size:11px;color:#999;margin-top:8px}
+.sources{margin-top:14px;display:flex;flex-wrap:wrap;gap:7px}
+.source{font-size:11px;color:#555;border:1px solid var(--line);padding:6px 9px;border-radius:9px;text-decoration:none}
+.composer-wrap{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(transparent,#fff 28%);padding:32px 16px 18px}
+.composer{width:min(900px,100%);margin:auto;border:1px solid #d8d8d8;border-radius:18px;background:#fff;box-shadow:0 8px 35px rgba(0,0,0,.08);display:flex;align-items:flex-end;padding:10px 10px 10px 16px}
+textarea{border:0;outline:0;resize:none;min-height:26px;max-height:180px;flex:1;padding:8px 0;background:transparent;color:var(--text)}
+.send{width:40px;height:40px;border:0;border-radius:12px;background:#111;color:#fff;font-weight:700}
+.send:disabled{opacity:.35;cursor:not-allowed}
+.panel{position:fixed;right:18px;top:76px;width:320px;max-width:calc(100% - 36px);border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 18px 55px rgba(0,0,0,.14);padding:18px;z-index:10}
+.hidden{display:none}
+.panel h2{font-size:15px;margin:0 0 16px}
+.field{margin:14px 0}.field label{display:block;font-size:12px;color:#666;margin-bottom:7px}
+.field input,.field textarea,.field select{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:#fff;outline:none}
+.field textarea{min-height:90px}
+.row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.switch{display:flex;align-items:center;gap:9px;font-size:13px}
+.status{font-size:11px;color:#777}
+@media(max-width:640px){.hero{padding-top:46px}.hero h1{font-size:35px}.suggestions{grid-template-columns:1fr}.bubble{max-width:88%}.topbar{padding:0 14px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="topbar">
+  <div class="brand">Mirae AI</div>
+  <div class="top-actions">
+    <button class="icon" id="newChat" title="새 대화">＋</button>
+    <button class="icon" id="settings" title="설정">⚙</button>
+  </div>
+</header>
+<main class="main">
+  <section class="hero" id="hero">
+    <h1>무엇을 도와드릴까요?</h1>
+    <p>질문, 아이디어, 학습, 창작, 게임, 번역, 분석까지 자연스럽게 이어가세요.</p>
+    <div class="suggestions">
+      <button class="suggestion" data-prompt="최신 정보를 찾아서 오늘 중요한 소식을 간단히 정리해줘">최신 정보<br><small>웹 검색으로 현재 정보를 찾아보기</small></button>
+      <button class="suggestion" data-prompt="새로운 게임 아이디어를 하나 만들고 구체적으로 발전시켜줘">아이디어<br><small>게임이나 창작 아이디어 발전시키기</small></button>
+      <button class="suggestion" data-prompt="어려운 개념 하나를 중학생도 이해할 수 있게 설명해줘">학습<br><small>복잡한 개념을 쉽게 풀어보기</small></button>
+      <button class="suggestion" data-prompt="자연스러운 한국어 글을 하나 작성해줘">글쓰기<br><small>문장, 글, 번역을 자연스럽게 다듬기</small></button>
+    </div>
+  </section>
+  <section class="messages" id="messages"></section>
+</main>
+<div class="composer-wrap">
+  <form class="composer" id="form">
+    <textarea id="input" rows="1" placeholder="메시지를 입력하세요"></textarea>
+    <button class="send" id="send" type="submit">↑</button>
+  </form>
+  <div style="width:min(900px,100%);margin:7px auto 0;text-align:center" class="status">Mirae는 필요할 때 웹 검색 결과를 참고해 답변합니다.</div>
+</div>
+<div class="panel hidden" id="panel">
+  <div class="row"><h2>설정</h2><button class="icon" id="close">×</button></div>
+  <div class="field"><label>인격</label><select id="personality"><option value="balanced">균형 잡힌</option><option value="friendly">친근한</option><option value="professional">전문적인</option><option value="concise">간결한</option><option value="creative">창의적인</option></select></div>
+  <div class="field"><label>개인 지침</label><textarea id="instructions" placeholder="Mirae가 대화할 때 지켜야 할 방식을 적어주세요."></textarea></div>
+  <div class="field row"><label class="switch"><input type="checkbox" id="web" checked> 웹 검색 기본 사용</label></div>
+  <div class="field"><label>창의성 <span id="tempValue">0.70</span></label><input id="temp" type="range" min=".2" max="1.2" step=".05" value=".7"></div>
+</div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const messages=$("#messages"),input=$("#input"),send=$("#send"),hero=$("#hero");
+const state=JSON.parse(localStorage.getItem("mirae-settings")||"{}");
+$("#personality").value=state.personality||"balanced";
+$("#instructions").value=state.instructions||"";
+$("#web").checked=state.web!==false;
+$("#temp").value=state.temperature||".7";
+$("#tempValue").textContent=Number($("#temp").value).toFixed(2);
+let history=[];
+const save=()=>localStorage.setItem("mirae-settings",JSON.stringify({
+ personality:$("#personality").value,instructions:$("#instructions").value,
+ web:$("#web").checked,temperature:Number($("#temp").value)
+}));
+function addMessage(role,text,sources=[]){
+  const el=document.createElement("article");
+  el.className="message "+role;
+  const bubble=document.createElement("div");
+  bubble.className="bubble";
+  bubble.textContent=text;
+  el.appendChild(bubble);
+  if(role==="assistant"){
+    const meta=document.createElement("div");
+    meta.className="meta";
+    meta.textContent="Mirae AI";
+    bubble.appendChild(meta);
+    if(sources.length){
+      const box=document.createElement("div");
+      box.className="sources";
+      for(const s of sources){
+        const a=document.createElement("a");
+        a.className="source";a.href=s.url;a.target="_blank";a.rel="noopener";
+        a.textContent=s.title;
+        box.appendChild(a);
+      }
+      bubble.appendChild(box);
+    }
+  }
+  messages.appendChild(el);
+  el.scrollIntoView({behavior:"smooth",block:"end"});
+}
+function setBusy(v){
+  send.disabled=v;
+  send.textContent=v?"…":"↑";
+}
+async function ask(text){
+  const message=text.trim();
+  if(!message)return;
+  addMessage("user",message);
+  history.push({role:"user",content:message});
+  hero.style.display="none";
+  input.value="";
+  input.style.height="auto";
+  setBusy(true);
+  const thinking=document.createElement("article");
+  thinking.className="message assistant";
+  thinking.id="thinking";
+  thinking.innerHTML='<div class="bubble">생각하는 중…</div>';
+  messages.appendChild(thinking);
+  const settings={personality:$("#personality").value,instructions:$("#instructions").value,web_search:$("#web").checked,temperature:Number($("#temp").value)};
+  save();
+  try{
+    const response=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      message,history:history.slice(-12),...settings
+    })});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.detail||"API 요청에 실패했습니다.");
+    thinking.remove();
+    addMessage("assistant",data.reply,data.sources||[]);
+    history.push({role:"assistant",content:data.reply});
+  }catch(error){
+    thinking.remove();
+    addMessage("assistant","오류가 발생했습니다. "+error.message);
+    history.pop();
+  }finally{setBusy(false);input.focus();}
+}
+$("#form").addEventListener("submit",e=>{e.preventDefault();ask(input.value)});
+input.addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(input.value)}
+});
+input.addEventListener("input",()=>{
+  input.style.height="auto";input.style.height=Math.min(input.scrollHeight,180)+"px";
+});
+document.querySelectorAll(".suggestion").forEach(b=>b.addEventListener("click",()=>ask(b.dataset.prompt)));
+$("#newChat").addEventListener("click",()=>{
+  history=[];messages.innerHTML="";hero.style.display="";
+  input.focus();
+});
+$("#settings").addEventListener("click",()=>$("#panel").classList.toggle("hidden"));
+$("#close").addEventListener("click",()=>$("#panel").classList.add("hidden"));
+["personality","instructions","web"].forEach(id=>$( "#"+id).addEventListener("input",save));
+$("#temp").addEventListener("input",()=>{$("#tempValue").textContent=Number($("#temp").value).toFixed(2);save()});
+input.focus();
+</script>
+</body>
+</html>
