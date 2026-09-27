@@ -1,4 +1,4 @@
-﻿const $=s=>document.querySelector(s);
+const $=s=>document.querySelector(s);
 const API="/api";
 let user=null;
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
