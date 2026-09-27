@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, HttpUrl
 import psycopg
 from psycopg.rows import dict_row
 
-APP_VERSION="6.0.1"
+APP_VERSION="6.1.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
@@ -59,6 +59,7 @@ class ChatRequest(BaseModel):
     message:str=Field(min_length=1,max_length=12000); history:list[ChatMessage]=Field(default_factory=list)
     personality:str="balanced"; instructions:str=""; web_search:bool=True
     temperature:float=Field(.7,ge=.2,le=1.2); max_tokens:int=Field(2200,ge=64,le=3200)
+    conversation_id:str|None=None
 class Settings(BaseModel):
     theme:str="light"; personality:str="balanced"; instructions:str=""; web_search:bool=True
     temperature:float=Field(.7,ge=.2,le=1.2)
@@ -71,6 +72,9 @@ class SkillCreate(BaseModel):
     url:HttpUrl; method:str=Field("POST",pattern=r"^(GET|POST|PUT|PATCH|DELETE)$")
     headers:str=Field("",max_length=8000); body:str=Field("",max_length=20000)
 class SkillRun(BaseModel): params:dict[str,Any]=Field(default_factory=dict)
+class ConversationRename(BaseModel): title:str=Field(min_length=1,max_length=120)
+class MemoryCreate(BaseModel): content:str=Field(min_length=1,max_length=1000)
+class SkillPromptCreate(BaseModel): prompt:str=Field(min_length=10,max_length=4000)
 
 def lang(t:str):
     ko=len(re.findall(r"[가-힣]",t));ja=len(re.findall(r"[ぁ-ゖァ-ヺ]",t))
@@ -114,21 +118,64 @@ async def search_web(t:str):
     scored=[x for x in out if relevance(q,x)>=1]
     return scored[:3]
 
-def system_prompt(req,language,sources,skills):
+def system_prompt(req,language,sources,skills,memories=None,profile_data=None):
     rule={"ko":"한국어로 자연스럽게 답하세요. 사용자가 요청하지 않는 한 다른 언어를 섞지 마세요.","ja":"自然な日本語で答えてください。","en":"Answer in natural English unless the user requests another language."}[language]
     src=""
     if sources:
         src="\n웹 검색 결과:\n"+"\n".join(f"- {x['title']} | {x['published']} | {x['url']} | {x['snippet']}" for x in sources)
     sk="\n사용 가능한 스킬: "+", ".join(f"/skill {x['name']} {{...}}" for x in skills) if skills else ""
+    mm=memories or []
+    mem="\n기억된 사용자 정보(대화에 도움이 될 때만 사용):\n"+"\n".join(f"- {m['content']}" for m in mm) if mm else ""
+    p=profile_data or {}
+    profile_text="\n사용자 프로필(개인화에 도움이 될 때만 사용):\n- 이름: "+str(p.get("name",""))+"\n- 자기소개: "+str(p.get("bio",""))+"\n- 생일: "+str(p.get("birth_date",""))
+    self_info="Mirae AI service facts: public web app domain https://mirae.koharu.live; API base https://mirae.koharu.live/v1; backend is FastAPI on Railway; PostgreSQL is Neon; model provider gateway is Hugging Face Router; current configured model is "+HF_MODEL+". Features: account login, email verification, profile, personalization, themes, conditional web search, streaming responses, Markdown/code rendering, account-scoped API keys, HTTP skills, and user memory. API keys are account-scoped and stored hashed. Email verification codes expire after 5 minutes. Never claim the app has capabilities that are not listed here. This self-information is product configuration, not a substitute for live web search."
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-27. {rule}
 Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels. If the user writes in Korean or Japanese, answer in that language even when the message contains English product names, programming terms, or code. Never switch to English merely because words like discord.py, Python, API, OpenAI, or JavaScript appear. When providing code, keep code in fenced Markdown blocks and keep the surrounding explanation in the user's language. Do not escape Markdown punctuation with backslashes unless the user explicitly asks for literal Markdown source.
 When web results are supplied, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
-User instructions: {req.instructions[:4000] or 'none'}.{src}{sk}"""
+Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{src}{sk}"""
+
+def ensure_conversation(uid,cid,title="새 대화"):
+    if not cid:cid=secrets.token_hex(16)
+    with db() as c:
+        c.execute("INSERT INTO mirae_conversations(id,user_id,title) VALUES (%s,%s,%s) ON CONFLICT(id) DO NOTHING",[cid,uid,title])
+        c.commit()
+    return cid
+
+async def generate_title(message):
+    if not HF_TOKEN:return "새 대화"
+    prompt=[
+        {"role":"system","content":"Create a very short Korean chat title from the user's first message. 2 to 8 Korean words. No quotes, no Markdown, no punctuation at the end, no explanation."},
+        {"role":"user","content":message[:2000]}
+    ]
+    try:
+        title=(await generate_once(prompt,0.2,32)).replace("\n"," ").strip().strip(chr(34)+chr(39))
+        title=re.sub(r"\s+"," ",title)[:80]
+        return title or "새 대화"
+    except Exception:return "새 대화"
 
 def save_chat(uid,msg,reply,mode,sources,cid=""):
+    cid=ensure_conversation(uid,cid)
     with db() as c:
-        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id) VALUES (%s,'user',%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s)",[uid,msg,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,uid,reply,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid]);c.commit()
+        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id) VALUES (%s,'user',%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s)",[uid,msg,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,uid,reply,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid])
+        c.execute("UPDATE mirae_conversations SET updated_at=now() WHERE id=%s AND user_id=%s",[cid,uid])
+        c.commit()
+    return cid
+
+def current_title_missing(uid,cid):
+    if not cid:return False
+    with db() as c:
+        row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s AND user_id=%s",[cid,uid]).fetchone()
+    return bool(row and row["title"]=="새 대화")
+
+async def finalize_conversation(uid,cid,first_message):
+    if not cid:return
+    with db() as c:
+        row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s AND user_id=%s",[cid,uid]).fetchone()
+    if row and row["title"]=="새 대화":
+        title=await generate_title(first_message)
+        with db() as c:
+            c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",[title,cid,uid]);c.commit()
 
 def set_session(resp,uid):
     tok=secrets.token_urlsafe(48); exp=datetime.now(timezone.utc)+timedelta(days=SESSION_DAYS)
@@ -152,7 +199,33 @@ def init_db():
             name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',url TEXT NOT NULL,method TEXT NOT NULL DEFAULT 'POST',
             headers TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',active BOOLEAN NOT NULL DEFAULT true,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(user_id,name))""")
-        c.execute("CREATE INDEX IF NOT EXISTS mirae_skills_user_idx ON mirae_skills(user_id)");c.commit()
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_skills_user_idx ON mirae_skills(user_id)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_conversations(
+            id TEXT PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            title TEXT NOT NULL DEFAULT '새 대화',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_conversations_user_idx ON mirae_conversations(user_id,updated_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_memories(
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            content TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_memories_user_idx ON mirae_memories(user_id,updated_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_feedback(
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            conversation_id TEXT,
+            message_hash TEXT NOT NULL,
+            feedback TEXT NOT NULL CHECK(feedback IN ('like','dislike')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE(user_id,message_hash)
+        )""")
+        c.commit()
 
 @app.on_event("startup")
 async def startup():
@@ -274,8 +347,77 @@ async def put_settings(data:Settings,request:Request):
 async def history(request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
-    with db() as c:r=c.execute("SELECT id,role,content,mode,model,sources,conversation_id,created_at FROM mirae_chat_history WHERE user_id=%s ORDER BY created_at DESC LIMIT 400",[u["id"]]).fetchall()
-    return list(reversed(r))
+    with db() as c:
+        r=c.execute("""SELECT h.id,h.role,h.content,h.mode,h.model,h.sources,h.conversation_id,h.created_at,
+                              COALESCE(cv.title,'새 대화') AS conversation_title
+                       FROM mirae_chat_history h
+                       LEFT JOIN mirae_conversations cv ON cv.id=h.conversation_id
+                       WHERE h.user_id=%s ORDER BY h.created_at ASC LIMIT 600""",[u["id"]]).fetchall()
+    return r
+
+@app.get("/conversations")
+async def conversations(request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:return c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
+
+@app.put("/conversations/{conversation_id}")
+async def rename_conversation(conversation_id:str,data:ConversationRename,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    title=re.sub(r"\s+"," ",data.title.strip())[:120]
+    with db() as c:
+        r=c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s RETURNING id,title",[title,conversation_id,u["id"]]).fetchone()
+        if not r:raise HTTPException(404,"대화를 찾을 수 없습니다.")
+        c.commit()
+    return r
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id:str,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        c.execute("DELETE FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s",[u["id"],conversation_id])
+        r=c.execute("DELETE FROM mirae_conversations WHERE user_id=%s AND id=%s RETURNING id",[u["id"],conversation_id]).fetchone()
+        c.commit()
+    return {"ok":True,"deleted":bool(r)}
+
+@app.get("/memories")
+async def list_memories(request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:return c.execute("SELECT id,content,created_at,updated_at FROM mirae_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
+
+@app.post("/memories")
+async def create_memory(data:MemoryCreate,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("INSERT INTO mirae_memories(user_id,content) VALUES (%s,%s) RETURNING id,content,created_at,updated_at",[u["id"],data.content.strip()]).fetchone();c.commit()
+    return r
+
+@app.delete("/memories/{memory_id}")
+async def delete_memory(memory_id:int,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("DELETE FROM mirae_memories WHERE id=%s AND user_id=%s RETURNING id",[memory_id,u["id"]]).fetchone();c.commit()
+    return {"ok":True,"deleted":bool(r)}
+
+@app.put("/feedback")
+async def feedback(data:dict[str,Any],request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    value=str(data.get("feedback",""))
+    if value not in {"like","dislike"}:raise HTTPException(400,"feedback must be like or dislike.")
+    mh=str(data.get("message_hash","")).strip()
+    if not mh:raise HTTPException(400,"message_hash is required.")
+    with db() as c:
+        c.execute("""INSERT INTO mirae_feedback(user_id,conversation_id,message_hash,feedback)
+                     VALUES (%s,%s,%s,%s)
+                     ON CONFLICT(user_id,message_hash) DO UPDATE SET feedback=EXCLUDED.feedback,conversation_id=EXCLUDED.conversation_id""",
+                  [u["id"],str(data.get("conversation_id","")),mh,value]);c.commit()
+    return {"ok":True,"feedback":value}
 
 def templ(v:Any,p:dict):
     if isinstance(v,str):
@@ -338,6 +480,27 @@ async def skill_create(data:SkillCreate,request:Request):
         except psycopg.errors.UniqueViolation:c.rollback();raise HTTPException(409,"같은 이름의 스킬이 이미 있습니다.")
     return r
 
+@app.post("/skills/from-prompt")
+async def skill_from_prompt(data:SkillPromptCreate,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    urls=re.findall(r"https?://[^\s<>{}\"]+",data.prompt)
+    if not urls:raise HTTPException(400,"프롬프트에 API URL(http:// 또는 https://)을 포함해주세요.")
+    parse_prompt=[
+        {"role":"system","content":"Turn the user's natural-language skill description into ONLY one JSON object with keys name,description,url,method,headers,body. method must be GET,POST,PUT,PATCH,DELETE. Do not invent a URL: use exactly the URL from the user prompt. For GET/DELETE, put no body. For POST/PUT/PATCH, if the user names input fields, use {{field}} placeholders in JSON body. headers should be a JSON object string or empty. No Markdown."},
+        {"role":"user","content":data.prompt}
+    ]
+    raw=await generate_once(parse_prompt,0.1,220)
+    match=re.search(r"\{.*\}",raw,re.S)
+    if not match:raise HTTPException(400,"스킬 설명을 구조화하지 못했습니다. URL과 사용 방법을 더 구체적으로 적어주세요.")
+    try:obj=json.loads(match.group(0))
+    except Exception:raise HTTPException(400,"스킬 설정을 읽지 못했습니다.")
+    if str(obj.get("url","")) != urls[0].rstrip(".,)"):raise HTTPException(400,"AI가 입력한 API URL이 프롬프트의 URL과 일치하지 않습니다.")
+    try:
+        sc=SkillCreate(name=str(obj.get("name","api-skill")),description=str(obj.get("description","")),url=str(obj["url"]),method=str(obj.get("method","GET")).upper(),headers=str(obj.get("headers","")),body=str(obj.get("body","")))
+    except Exception as e:raise HTTPException(400,f"생성된 스킬 형식이 올바르지 않습니다: {str(e)[:200]}")
+    return await skill_create(sc,request)
+
 @app.delete("/skills/{skill_id}")
 async def skill_delete(skill_id:int,request:Request):
     u=session_user(request)
@@ -395,13 +558,17 @@ async def generate_stream(msgs,temp,max_tokens):
 def event(name,data):return f"event: {name}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n"
 
 async def prepare(req,request):
-    u=session_user(request);sources=[];need=req.web_search and wants_web(req.message);skill_list=[]
+    u=session_user(request);sources=[];need=req.web_search and wants_web(req.message);skill_list=[];memories=[];profile_data={}
     if u:
-        with db() as c:skill_list=c.execute("SELECT id,name,description FROM mirae_skills WHERE user_id=%s AND active=true ORDER BY name",[u["id"]]).fetchall()
+        with db() as c:
+            user_row=c.execute("SELECT name,bio,birth_date FROM mirae_users WHERE id=%s",[u["id"]]).fetchone()
+            skill_list=c.execute("SELECT id,name,description FROM mirae_skills WHERE user_id=%s AND active=true ORDER BY name",[u["id"]]).fetchall()
+            memories=c.execute("SELECT id,content FROM mirae_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 20",[u["id"]]).fetchall()
+            profile_data=user_row or {}
     if need:
         try:sources=await search_web(req.message)
         except Exception:sources=[]
-    msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list)}]
+    msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list,memories,profile_data)}]
     msgs += [{"role":m.role,"content":m.content[:5000]} for m in req.history[-12:] if m.role in ("user","assistant") and m.content.strip()]
     msgs.append({"role":"user","content":req.message})
     return u,sources,msgs,need
@@ -411,11 +578,17 @@ async def chat(req:ChatRequest,request:Request):
     sk=await run_skill_command(req.message,request);u=session_user(request)
     if sk:
         s,r=sk;reply=f"[스킬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
-        if u:save_chat(u["id"],req.message,reply,"skill",[{"type":"skill","name":s["name"]}])
+        if u:
+            cid=save_chat(u["id"],req.message,reply,"skill",[{"type":"skill","name":s["name"]}],req.conversation_id or "")
+            if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
+        else:cid=""
         return {"reply":reply,"model":"skill","language":lang(req.message),"sources":[]}
     u,sources,msgs,need=await prepare(req,request);reply=await generate_once(msgs,req.temperature,req.max_tokens)
-    if u:save_chat(u["id"],req.message,reply,"web" if sources else "model",sources)
-    return {"reply":reply,"model":HF_MODEL,"language":lang(req.message),"sources":sources}
+    cid=""
+    if u:
+        cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "")
+        if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
+    return {"reply":reply,"model":HF_MODEL,"language":lang(req.message),"sources":sources,"conversation_id":cid}
 
 @app.post("/chat/stream")
 async def chat_stream(req:ChatRequest,request:Request):
@@ -423,22 +596,23 @@ async def chat_stream(req:ChatRequest,request:Request):
         try:
             sk=await run_skill_command(req.message,request);u=session_user(request)
             if sk:
-                s,r=sk;yield event("stage",{"id":"skill","label":f"'{s['name']}' 스킬 실행 중"});reply=f"[스킬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}";yield event("delta",{"text":reply})
-                if u:save_chat(u["id"],req.message,reply,"skill",[{"type":"skill","name":s["name"]}])
-                yield event("done",{"model":"skill","sources":[]});return
+                s,r=sk
+                yield event("stage",{"id":"skill","label":f"'{s['name']}' 스킬 실행 중"})
+                reply=f"[스킬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
+                yield event("delta",{"text":reply})
+                cid=""
+                if u:
+                    cid=save_chat(u["id"],req.message,reply,"skill",[{"type":"skill","name":s["name"]}],req.conversation_id or "")
+                    if current_title_missing(u["id"],cid):
+                        await finalize_conversation(u["id"],cid,req.message)
+                yield event("conversation",{"id":cid,"title":"스킬 실행"})
+                yield event("done",{"model":"skill","sources":[],"conversation_id":cid})
+                return
             yield event("stage",{"id":"analyze","label":"질문 분석 중"})
-            u=session_user(request);need=req.web_search and wants_web(req.message);sources=[]
+            u,sources,msgs,need=await prepare(req,request)
             if need:
                 yield event("stage",{"id":"search","label":"관련 정보 확인 중"})
-                try:sources=await search_web(req.message)
-                except Exception:sources=[]
-            skill_list=[]
-            if u:
-                with db() as c:skill_list=c.execute("SELECT id,name,description FROM mirae_skills WHERE user_id=%s AND active=true ORDER BY name",[u["id"]]).fetchall()
-            msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list)}]
-            msgs += [{"role":m.role,"content":m.content[:5000]} for m in req.history[-12:] if m.role in ("user","assistant") and m.content.strip()]
-            msgs.append({"role":"user","content":req.message})
-            if need:yield event("sources",{"sources":sources})
+                yield event("sources",{"sources":sources})
             yield event("stage",{"id":"generate","label":"답변 생성 중"});chunks=[]
             try:
                 async for piece in generate_stream(msgs,req.temperature,req.max_tokens):chunks.append(piece);yield event("delta",{"text":piece})
@@ -446,8 +620,16 @@ async def chat_stream(req:ChatRequest,request:Request):
                 if chunks:raise
                 reply=await generate_once(msgs,req.temperature,req.max_tokens);chunks=[reply];yield event("delta",{"text":reply})
             reply="".join(chunks).strip()
-            if u:save_chat(u["id"],req.message,reply,"web" if sources else "model",sources)
-            yield event("done",{"model":HF_MODEL,"sources":sources})
+            cid=""
+            if u:
+                cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "")
+                is_first=(current_title_missing(u["id"],cid))
+                if is_first:
+                    yield event("stage",{"id":"title","label":"대화 제목 정리 중"})
+                    await finalize_conversation(u["id"],cid,req.message)
+                    with db() as c:title_row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s",[cid]).fetchone()
+                    yield event("conversation",{"id":cid,"title":title_row["title"] if title_row else "새 대화"})
+            yield event("done",{"model":HF_MODEL,"sources":sources,"conversation_id":cid})
         except HTTPException as e:yield event("error",{"message":e.detail})
         except Exception as e:yield event("error",{"message":str(e)[:500]})
     return StreamingResponse(gen(),media_type="text/event-stream",headers={"Cache-Control":"no-cache, no-transform","X-Accel-Buffering":"no","Connection":"keep-alive"})

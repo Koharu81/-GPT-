@@ -1,8 +1,10 @@
 const $=s=>document.querySelector(s);
 const API="/api";
 let user=null;
+let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
 let chats=[],current=[],currentId=null,authMode="login",pendingSignup=null,resendTimer=null;
+let currentTitle="새 대화";
 
 async function req(path,opt={}){
   const r=await fetch(API+path,{credentials:"include",...opt,headers:{"Content-Type":"application/json",...(opt.headers||{})}});
@@ -33,10 +35,17 @@ async function boot(){
 }
 async function loadSettings(){try{settings=await req("/settings")}catch{}}
 async function loadProfile(){if(user)try{applyProfile(await req("/profile"))}catch{}}
-async function loadHistory(){if(user)try{restoreServer(await req("/history"))}catch{}}
+async function loadHistory(){
+  if(user)try{
+    const [rows,convs]=await Promise.all([req("/history"),req("/conversations")]);
+    restoreServer(rows,convs);renderHistory();
+  }catch{}
+}
 function setAccountLabel(){
-  $("#account").textContent=user?user.name:"계정";
-  if($("#userInfo"))$("#userInfo").textContent=user?user.name+" · "+user.email:"로그인하지 않음";
+  if($("#accountName"))$("#accountName").textContent=user?(profile.name||user.name):"계정";
+  if($("#userInfo"))$("#userInfo").textContent=user?(profile.name||user.name)+" · "+user.email:"로그인하지 않음";
+  if($("#accountAvatar"))setAvatar($("#accountAvatar"),profile.name||user?.name||"M",profile.avatar_url||"");
+  if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),profile.name||user?.name||"M",profile.avatar_url||"");
 }
 function setAvatar(el,name,url){
   el.textContent="";
@@ -44,6 +53,7 @@ function setAvatar(el,name,url){
   else el.textContent=(name||"M").slice(0,1).toUpperCase();
 }
 function applyProfile(p){
+  profile={...profile,...p};
   if($("#profileName"))$("#profileName").value=p.name||"";
   if($("#profileEmail"))$("#profileEmail").textContent=p.email||"";
   if($("#profileBio"))$("#profileBio").value=p.bio||"";
@@ -51,6 +61,8 @@ function applyProfile(p){
   if($("#profileAvatarUrl"))$("#profileAvatarUrl").value=p.avatar_url||"";
   if($("#profileAvatar"))setAvatar($("#profileAvatar"),p.name||"M",p.avatar_url||"");
   if($("#accountAvatar"))setAvatar($("#accountAvatar"),p.name||"M",p.avatar_url||"");
+  if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),p.name||"M",p.avatar_url||"");
+  setAccountLabel();
 }
 function renderEmpty(){
   $("#messages").innerHTML='<section class="hero"><h1>무엇을 도와드릴까요?</h1><p>질문, 학습, 창작, 분석, 번역까지 하나의 대화에서 이어가세요.</p><div class="cards">'+
@@ -65,7 +77,7 @@ function normalizeMarkdown(text){
 }
 function renderMarkdown(text){
   const src=normalizeMarkdown(text);const lines=src.split("\n"),out=[];let i=0;
-  const esc=v=>escapeHtml(v);const inline=v=>{let s=esc(v);s=s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/`([^`\n]+)`/g,"<code>$1</code>");s=s.replace(/(\*\*|__)(.+?)\1/g,"<strong>$2</strong>");s=s.replace(/~~(.+?)~~/g,"<del>$1</del>");s=s.replace(/(^|[^\\w])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");return s};
+  const esc=v=>escapeHtml(v);const inline=v=>{let s=esc(v),links=[];s=s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,(_,label,url)=>{const i=links.push("<a href=\""+url+"\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">"+label+"</a>")-1;return "\u0000L"+i+"\u0000"});s=s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/`([^`\n]+)`/g,"<code>$1</code>");s=s.replace(/(\*\*|__)(.+?)\1/g,"<strong>$2</strong>");s=s.replace(/~~(.+?)~~/g,"<del>$1</del>");s=s.replace(/(^|[^\\w])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");s=s.replace(/\u0000L(\d+)\u0000/g,(_,i)=>links[Number(i)]);return s};
   while(i<lines.length){const line=lines[i];if(!line.trim()){i++;continue}
     if(/^```/.test(line.trim())){const lang=(line.trim().slice(3).trim()||"text").replace(/[^A-Za-z0-9_+#.-]/g,""),code=[];i++;while(i<lines.length&&!/^```/.test(lines[i].trim())){code.push(lines[i]);i++}if(i<lines.length)i++;out.push("<div class='code-shell'><div class='code-head'><span>"+esc(lang)+"</span><button type='button' class='code-copy'>복사</button></div><pre><code>"+esc(code.join("\n"))+"</code></pre></div>");continue}
     let m=line.match(/^(#{1,6})\s+(.+)$/);if(m){const n=m[1].length;out.push("<h"+n+">"+inline(m[2])+"</h"+n+">");i++;continue}
@@ -83,13 +95,32 @@ function addCodeCopy(pre){
   button.onclick=async()=>{try{await navigator.clipboard.writeText(pre.querySelector("code")?.textContent||"");button.textContent="복사됨";setTimeout(()=>button.textContent="복사",1200)}catch{button.textContent="복사 실패"}};
   pre.appendChild(button);
 }
-function renderBubble(el,text){el.innerHTML=renderMarkdown(text);}
-function add(role,text,sources=[]){
+function renderBubble(el,text){
+  el.innerHTML=renderMarkdown(text);
+  el.querySelectorAll(".code-copy").forEach(button=>{button.onclick=async()=>{const code=button.closest(".code-shell")?.querySelector("pre code")?.textContent||button.closest("pre")?.querySelector("code")?.textContent||"";await copyText(code,button)}});
+}
+function add(role,text,sources=[],feedbackKey=""){
   const e=document.createElement("article");e.className="msg "+role;
-  e.innerHTML='<div class="avatar">'+(role==="user"?"나":"M")+'</div><div class="wrap"><div class="bubble"></div></div>';
+  const name=role==="user"?(profile.name||user?.name||"나"):"Mirae";
+  e.innerHTML='<div class="msg-id"><div class="avatar"></div><b class="msg-name">'+escapeHtml(name)+'</b></div><div class="wrap"><div class="bubble"></div></div>';
+  const avatar=e.querySelector(".avatar");
+  if(role==="user")setAvatar(avatar,name,profile.avatar_url||"");else avatar.textContent="M";
   if(role==="assistant")renderBubble(e.querySelector(".bubble"),text);else e.querySelector(".bubble").textContent=text;
   if(role==="assistant"&&sources.length)renderSources(e,sources);
+  if(role==="assistant"&&feedbackKey)addMessageActions(e,feedbackKey,text);
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});return e;
+}
+async function copyText(text,button){
+  try{await navigator.clipboard.writeText(text);button.textContent="복사됨";setTimeout(()=>button.textContent="복사",1200)}catch{button.textContent="복사 실패"}
+}
+function addMessageActions(e,key,text){
+  const wrap=e.querySelector(".wrap");
+  const actions=document.createElement("div");actions.className="message-actions";
+  const copy=document.createElement("button");copy.className="message-action";copy.textContent="복사";copy.onclick=()=>copyText(text,copy);
+  const like=document.createElement("button");like.className="message-action feedback";like.dataset.value="like";like.textContent="좋아요";
+  const dislike=document.createElement("button");dislike.className="message-action feedback";dislike.dataset.value="dislike";dislike.textContent="싫어요";
+  [like,dislike].forEach(btn=>btn.onclick=async()=>{actions.querySelectorAll(".feedback").forEach(x=>x.classList.remove("selected"));btn.classList.add("selected");if(user)try{await req("/feedback",{method:"PUT",body:JSON.stringify({feedback:btn.dataset.value,message_hash:key,conversation_id:currentId})})}catch{}});
+  actions.append(copy,like,dislike);wrap.appendChild(actions);
 }
 function renderSources(e,sources){
   let box=e.querySelector(".sources");
@@ -99,11 +130,11 @@ function renderSources(e,sources){
 }
 function createAssistant(){
   const e=document.createElement("article");e.className="msg assistant";
-  e.innerHTML='<div class="avatar">M</div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">질문 분석 중</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
+  e.innerHTML='<div class="msg-id"><div class="avatar">M</div><b class="msg-name">Mirae</b></div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">질문 분석 중</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
   const process=e.querySelector(".process"),toggle=e.querySelector(".process-toggle");
   toggle.onclick=()=>{process.classList.toggle("expanded");toggle.querySelector(".process-chevron").textContent=process.classList.contains("expanded")?"⌃":"⌄"};
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});
-  return {e:e,bubble:e.querySelector(".bubble"),process:process,label:e.querySelector(".process-label"),details:e.querySelector(".process-details"),logs:[]};
+  return {e:e,bubble:e.querySelector(".bubble"),process:process,label:e.querySelector(".process-label"),details:e.querySelector(".process-details"),logs:[],raw:""};
 }
 function addProcessLog(box,label){
   const now=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
@@ -112,36 +143,66 @@ function addProcessLog(box,label){
   box.details.innerHTML=box.logs.map(x=>`<div class="process-log"><span>${escapeHtml(x.label)}</span><time>${x.time}</time></div>`).join("");
 }
 function stage(box,label){box.label.textContent=label;box.process.classList.remove("done");addProcessLog(box,label)}
-function finish(box){box.label.textContent="답변 완료";box.process.classList.add("done");addProcessLog(box,"답변 완료")}
-function restoreServer(rows){
-  const grouped=[],by={};
+function finish(box){
+  box.label.textContent="답변 완료";box.process.classList.add("done");addProcessLog(box,"답변 완료");
+  if(!box.e.querySelector(".message-actions"))addMessageActions(box.e,simpleHash(box.raw||box.bubble.textContent),box.raw||box.bubble.textContent);
+}
+function restoreServer(rows,convs=[]){
+  const grouped=[],by={},titles=Object.fromEntries(convs.map(x=>[x.id,x.title]));
   for(const x of rows){
-    if(x.conversation_id){
-      if(!by[x.conversation_id]){by[x.conversation_id]={id:x.conversation_id,title:"새 대화",messages:[]};grouped.push(by[x.conversation_id])}
-      by[x.conversation_id].messages.push({role:x.role,content:x.content,sources:x.sources||[]});continue;
-    }
-    if(x.role==="user"){const c={id:crypto.randomUUID(),title:x.content.slice(0,35),messages:[]};grouped.push(c)}
-    const c=grouped[grouped.length-1];if(c)c.messages.push({role:x.role,content:x.content,sources:x.sources||[]});
+    const id=x.conversation_id||("legacy-"+x.id);
+    if(!by[id])by[id]={id:id,title:x.conversation_title||titles[id]||"새 대화",messages:[]};
+    by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
   }
-  chats=grouped.slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));
+  chats=Object.values(by).slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
   const h=$("#history");h.innerHTML="";
-  [...chats].reverse().forEach(c=>{const b=document.createElement("button");b.className="btn";b.textContent=c.title||"새 대화";b.onclick=()=>loadChat(c.id);h.appendChild(b)});
+  [...chats].reverse().forEach(c=>{
+    const row=document.createElement("div");row.className="history-row";
+    const b=document.createElement("button");b.className="btn history-main";b.textContent=c.title||"새 대화";b.onclick=()=>loadChat(c.id);
+    const menu=document.createElement("button");menu.className="history-menu";menu.type="button";menu.textContent="⋯";menu.title="대화 메뉴";
+    menu.onclick=e=>{e.stopPropagation();openConversationMenu(row,c)};
+    row.append(b,menu);h.appendChild(row);
+  });
+}
+function openConversationMenu(row,c){
+  document.querySelectorAll(".conversation-menu").forEach(x=>x.remove());
+  const menu=document.createElement("div");menu.className="conversation-menu";
+  const rename=document.createElement("button");rename.textContent="이름 변경";rename.onclick=()=>renameConversation(c);
+  const del=document.createElement("button");del.textContent="삭제";del.className="delete-menu";del.onclick=()=>deleteConversation(c);
+  menu.append(rename,del);row.appendChild(menu);
+}
+async function renameConversation(c){
+  const title=prompt("새 대화 이름",c.title||"새 대화");if(title===null)return;
+  const value=title.trim();if(!value)return;
+  try{
+    if(user)await req("/conversations/"+encodeURIComponent(c.id),{method:"PUT",body:JSON.stringify({title:value})});
+    c.title=value;currentTitle=value;renderHistory();saveLocal();if(c.id===currentId)$("#title").textContent=value;
+  }catch(e){alert(e.message)}
+}
+async function deleteConversation(c){
+  if(!confirm("이 대화를 삭제할까요? 삭제하면 대화 내용도 함께 삭제됩니다."))return;
+  try{
+    if(user)await req("/conversations/"+encodeURIComponent(c.id),{method:"DELETE"});
+    chats=chats.filter(x=>x.id!==c.id);localStorage.setItem("mirae-local",JSON.stringify(chats));
+    if(c.id===currentId)newChat(false);else renderHistory();
+  }catch(e){alert(e.message)}
 }
 function loadChat(id){
   const c=chats.find(x=>x.id===id);if(!c)return;
-  currentId=id;current=c.messages||[];$("#messages").innerHTML="";current.forEach(m=>add(m.role,m.content,m.sources||[]));
-  $("#title").textContent=c.title||"새 대화";closeSidebar();
+  currentId=id;currentTitle=c.title||"새 대화";current=c.messages||[];$("#messages").innerHTML="";
+  current.forEach(m=>add(m.role,m.content,m.sources||[],m.feedback_key||""));
+  $("#title").textContent=currentTitle;closeSidebar();
 }
 function newChat(save=true){
   if(save&&current.length)saveLocal();
-  current=[];currentId=crypto.randomUUID();$("#messages").innerHTML="";renderEmpty();$("#title").textContent="새 대화";closeSidebar();
+  current=[];currentId=crypto.randomUUID();currentTitle="새 대화";$("#messages").innerHTML="";renderEmpty();$("#title").textContent="새 대화";closeSidebar();
 }
 function saveLocal(){
   let c=chats.find(x=>x.id===currentId);
-  if(!c){c={id:currentId,title:(current.find(x=>x.role==="user")?.content||"").slice(0,35)||"새 대화",messages:[]};chats.push(c)}
-  c.messages=current;c.title=(current.find(x=>x.role==="user")?.content||"").slice(0,35)||"새 대화";
+  if(!c){c={id:currentId,title:currentTitle||"새 대화",messages:[]};chats.push(c)}
+  c.messages=current;c.title=currentTitle||c.title||"새 대화";
   chats=chats.slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
 }
 function parseSSEBlock(block,box,state){
@@ -150,28 +211,29 @@ function parseSSEBlock(block,box,state){
   if(!data)return;let obj;try{obj=JSON.parse(data)}catch{return}
   if(ev==="stage")stage(box,obj.label||"처리 중");
   else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"웹 검색 완료 · "+state.sources.length+"개 결과");renderSources(box.e,state.sources)}}
-  else if(ev==="delta"){box.bubble.textContent+=obj.text||"";box.e.scrollIntoView({behavior:"smooth",block:"end"})}
-  else if(ev==="done"){state.done=true;renderBubble(box.bubble,box.bubble.textContent);finish(box)}
+  else if(ev==="conversation"){state.conversation_id=obj.id||"";state.title=obj.title||"새 대화";currentTitle=state.title;const c=chats.find(x=>x.id===state.conversation_id);if(c)c.title=state.title;$("#title").textContent=state.title}
+  else if(ev==="delta"){box.raw=(box.raw||"")+(obj.text||"");box.bubble.textContent=box.raw;box.e.scrollIntoView({behavior:"smooth",block:"end"})}
+  else if(ev==="done"){state.done=true;if(obj.conversation_id)state.conversation_id=obj.conversation_id;renderBubble(box.bubble,box.raw||"");finish(box)}
   else if(ev==="error")throw Error(obj.message||"생성 중 오류가 발생했습니다.");
 }
 async function streamAsk(text,box){
-  const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600};
+  const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600,conversation_id:currentId};
   const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(!r.ok)throw Error("스트리밍 요청에 실패했습니다.");
   const type=r.headers.get("content-type")||"";
-  if(!type.includes("text/event-stream")){const d=await r.json();box.bubble.textContent=d.reply||"";if(d.sources?.length)renderSources(box.e,d.sources);finish(box);return d}
+  if(!type.includes("text/event-stream")){const d=await r.json();box.raw=d.reply||"";renderBubble(box.bubble,box.raw);if(d.sources?.length)renderSources(box.e,d.sources);finish(box);return d}
   const reader=r.body.getReader(),dec=new TextDecoder();let buffer="",state={sources:[]};
   while(true){
     const v=await reader.read();if(v.done)break;buffer+=dec.decode(v.value,{stream:true});
     const blocks=buffer.split("\n\n");buffer=blocks.pop()||"";blocks.forEach(b=>parseSSEBlock(b,box,state));
   }
   if(buffer.trim())parseSSEBlock(buffer,box,state);
-  return {reply:box.bubble.textContent,sources:state.sources};
+  return {reply:box.raw||"",sources:state.sources,conversation_id:state.conversation_id,title:state.title||currentTitle};
 }
 async function ask(text){
   text=text.trim();if(!text)return;
   if(!current.length)$("#messages").innerHTML="";
-  add("user",text);current.push({role:"user",content:text});$("#title").textContent=text.slice(0,35);$("#input").value="";$("#send").disabled=true;
+  add("user",text);current.push({role:"user",content:text});$("#title").textContent=currentTitle==="새 대화"?"대화 중":currentTitle;$("#input").value="";$("#send").disabled=true;
   const box=createAssistant();
   try{const d=await streamAsk(text,box);current.push({role:"assistant",content:d.reply,sources:d.sources||[]});saveLocal()}
   catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop()}
@@ -225,11 +287,11 @@ function selectPage(page){
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("hidden",p.id!=="page-"+page));
   const b=document.querySelector('.nav-btn[data-page="'+page+'"]');$("#settingTitle").textContent=b?b.textContent:"설정";$("#settingEyebrow").textContent=(b?b.textContent:"설정").toUpperCase();
-  if(page==="skills")loadSkills();
+  if(page==="skills")loadSkills();if(page==="memory")loadMemories();
 }
 document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>selectPage(b.dataset.page));
 $("#closeSettings").onclick=()=>$("#settingsOverlay").classList.add("hidden");
-$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#keysMenu").onclick=()=>location.href="/api-keys";$("#docsMenu").onclick=()=>location.href="/api-docs";
+$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#openKeys").onclick=()=>location.href="/api-keys";$("#openDocs").onclick=()=>location.href="/api-docs";
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
   try{
@@ -239,6 +301,30 @@ $("#saveProfile").onclick=async()=>{
 };
 $("#logout").onclick=async()=>{try{await req("/auth/logout",{method:"POST"})}catch{}user=null;setAccountLabel();$("#settingsOverlay").classList.add("hidden");newChat(false)};
 $("#clearLocal").onclick=()=>{localStorage.removeItem("mirae-local");chats=[];newChat(false)};
+async function loadMemories(){
+  if(!user)return;
+  const box=$("#memoryList");box.innerHTML="<div class='muted'>메모리 불러오는 중…</div>";
+  try{
+    const list=await req("/memories");box.innerHTML="";
+    if(!list.length){box.innerHTML="<div class='muted'>저장된 메모리가 없습니다.</div>";return}
+    list.forEach(m=>{
+      const card=document.createElement("div");card.className="memory-card";
+      card.innerHTML='<div class="memory-content">'+escapeHtml(m.content)+'</div><button class="danger memory-delete" type="button">삭제</button>';
+      card.querySelector(".memory-delete").onclick=async()=>{try{await req("/memories/"+m.id,{method:"DELETE"});loadMemories()}catch(e){alert(e.message)}};
+      box.appendChild(card);
+    });
+  }catch(e){box.innerHTML='<div class="muted">'+escapeHtml(e.message)+'</div>'}
+}
+$("#memoryForm").onsubmit=async e=>{
+  e.preventDefault();
+  const content=$("#memoryContent").value.trim();if(!content)return;
+  try{await req("/memories",{method:"POST",body:JSON.stringify({content:content})});$("#memoryContent").value="";loadMemories()}catch(err){alert(err.message)}
+};
+$("#registerSkillPrompt").onclick=async()=>{
+  const prompt=$("#skillPrompt").value.trim();if(!prompt)return;
+  const btn=$("#registerSkillPrompt");btn.disabled=true;btn.textContent="스킬 구성 중…";
+  try{await req("/skills/from-prompt",{method:"POST",body:JSON.stringify({prompt:prompt})});$("#skillPrompt").value="";btn.textContent="등록 완료";setTimeout(()=>btn.textContent="프롬프트로 등록",1200);loadSkills()}catch(err){alert(err.message);btn.textContent="프롬프트로 등록"}finally{btn.disabled=false}
+};
 async function loadSkills(){
   if(!user)return;const box=$("#skillList");box.innerHTML="<div class='muted'>스킬 불러오는 중…</div>";
   try{

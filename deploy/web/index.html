@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=10">
+<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=12">
 </head>
 <body>
 <div class="app">
@@ -13,10 +13,8 @@
   <div class="history" id="history"></div>
   <div class="side">
     <button class="btn side-btn" id="skillsMenu">스킬</button>
-    <button class="btn side-btn" id="keysMenu">API 키</button>
-    <button class="btn side-btn" id="docsMenu">API 문서</button>
     <button class="btn side-btn" id="settingsMenu">설정</button>
-    <button class="account-btn" id="account">계정</button>
+    <button class="account-btn" id="account"><span class="account-avatar" id="accountAvatar">M</span><span class="account-name" id="accountName">계정</span></button>
   </div>
 </aside>
 <main class="main">
@@ -63,6 +61,7 @@
       <button class="nav-btn" data-page="accountPage">계정</button>
       <button class="nav-btn" data-page="developer">개발자</button>
       <button class="nav-btn" data-page="skills">스킬</button>
+      <button class="nav-btn" data-page="memory">메모리</button>
     </nav>
     <section class="setting-body">
       <div class="setting-head"><div><div class="eyebrow" id="settingEyebrow">GENERAL</div><h2 id="settingTitle">일반</h2></div><button class="icon" id="closeSettings">×</button></div>
@@ -94,7 +93,7 @@
       </div>
 
       <div class="page hidden" id="page-accountPage">
-        <div class="account-card"><div class="profile-avatar" id="accountAvatar">M</div><div><b id="userInfo">로그인하지 않음</b><small>세션은 보안 쿠키로 유지됩니다.</small></div></div>
+        <div class="account-card"><div class="profile-avatar" id="accountPageAvatar">M</div><div><b id="userInfo">로그인하지 않음</b><small>세션은 보안 쿠키로 유지됩니다.</small></div></div>
         <button class="danger" id="logout">로그아웃</button>
       </div>
 
@@ -103,9 +102,20 @@
         <div class="setting-row"><div><b>API 문서</b><small>엔드포인트와 호출 형식을 확인합니다.</small></div><button class="outline" id="openDocs">열기</button></div>
       </div>
 
+      <div class="page hidden" id="page-memory">
+        <div class="section-note"><b>메모리</b><span>저장한 내용은 다음 대화에서 Mirae가 참고합니다. 원하지 않는 내용은 언제든 삭제할 수 있습니다.</span></div>
+        <form id="memoryForm">
+          <div class="field"><label>기억할 내용</label><textarea id="memoryContent" rows="4" maxlength="1000" placeholder="예: 나는 discord.py로 디스코드 봇을 자주 만든다."></textarea></div>
+          <button class="primary small" type="submit">메모리 저장</button>
+        </form>
+        <div class="memory-list" id="memoryList"></div>
+      </div>
+
       <div class="page hidden" id="page-skills">
         <div class="section-note"><b>스킬</b><span>API 주소와 입력값 이름만 넣어도 기본 설정이 자동으로 만들어집니다. GET은 입력값을 쿼리로, POST·PUT·PATCH는 JSON 본문으로 전달합니다.</span><code>/skill 스킬이름 {"key":"값"}</code></div>
         <form id="skillForm">
+          <div class="skill-prompt-card"><div><b>프롬프트로 등록</b><small>설명하듯 적으면 Mirae가 이름·방식·입력값을 구조화합니다. API URL은 반드시 포함하세요.</small></div><textarea id="skillPrompt" rows="3" placeholder="예: 날씨 조회 스킬을 만들어줘. GET으로 https://api.example.com/weather 에 요청하고 city를 쿼리로 보내줘."></textarea><button class="outline" id="registerSkillPrompt" type="button">프롬프트로 등록</button></div>
+          <div class="divider-label"><span>직접 설정</span></div>
           <div class="grid2"><div class="field"><label>스킬 이름</label><input id="skillName" maxlength="60" placeholder="예: weather"></div><div class="field"><label>요청 방식</label><select id="skillMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div></div>
           <div class="field"><label>무엇을 하는 스킬인가요?</label><input id="skillDescription" maxlength="500" placeholder="예: 날씨 API에서 지역별 현재 날씨 가져오기"></div>
           <div class="field"><label>API 주소</label><input id="skillUrl" placeholder="https://api.example.com/weather"></div>
@@ -122,6 +132,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=11" defer></script>
+<script src="/app.js?v=12" defer></script>
 </body>
 </html>
