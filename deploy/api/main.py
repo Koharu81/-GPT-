@@ -17,7 +17,7 @@ app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.ap
 
 DATABASE_URL=os.getenv("DATABASE_URL","")
 HF_TOKEN=os.getenv("HF_TOKEN","")
-HF_MODEL=os.getenv("HF_MODEL","openai/gpt-oss-120b:groq")
+HF_MODEL=os.getenv("HF_MODEL","Qwen/Qwen2.5-7B-Instruct:fastest")
 NEWS_RSS="https://news.google.com/rss/search"
 RESEND_API_KEY=os.getenv("RESEND_API_KEY","")
 RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
