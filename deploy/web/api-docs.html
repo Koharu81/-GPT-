@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mirae AI API 문서</title>
+<style>
+body{margin:0;background:#fff;color:#202123;font:15px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(920px,calc(100% - 36px));margin:auto;padding:48px 0 80px}h1{font-size:38px;letter-spacing:-.05em}h2{margin-top:38px;border-top:1px solid #eee;padding-top:25px}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{background:#f3f4f6;padding:2px 5px;border-radius:5px}pre{background:#111827;color:#f9fafb;padding:18px;border-radius:12px;overflow:auto}.back{display:inline-block;color:#555;text-decoration:none;margin-bottom:25px}.note{padding:14px 16px;background:#f6f6f6;border-radius:10px}.method{font-weight:700}.route{font-family:monospace;font-size:18px}li{margin:6px 0}
+</style></head><body><main>
+<a class="back" href="/">← Mirae AI로 돌아가기</a>
+<h1>Mirae AI API</h1>
+<p>OpenAI 호환 형식으로 Mirae AI를 호출할 수 있는 무료 게이트웨이입니다.</p>
+<div class="note"><b>중요:</b> Mirae 서버 자체에는 사용자별 토큰 사용량 제한을 두지 않습니다. 다만 실제 모델 공급자(Hugging Face Inference Providers)의 쿼터·요금·레이트리밋·모델 가용성까지 무제한으로 만들 수는 없습니다.</div>
+<h2>기본 정보</h2><ul><li>OpenAI 호환 엔드포인트: <code>/v1/chat/completions</code></li><li>모델 ID: <code>mirae-free</code></li><li>모델 목록: <code>/v1/models</code></li><li>상태 확인: <code>/health</code></li><li>API 키 환경변수 <code>MIRAE_API_KEY</code>가 서버에 설정된 경우 <code>Authorization: Bearer ...</code>가 필요합니다.</li></ul>
+<h2>Chat Completions</h2><p><span class="method">POST</span> <span class="route">/v1/chat/completions</span></p>
+<pre>{
+  "model": "mirae-free",
+  "messages": [
+    {"role": "user", "content": "안녕하세요"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 700
+}</pre>
+<h2>응답</h2>
+<pre>{
+  "id": "mirae-chat",
+  "object": "chat.completion",
+  "model": "mirae-free",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "안녕하세요!"},
+    "finish_reason": "stop"
+  }]
+}</pre>
+<h2>Python</h2><pre>from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://mirae.koharu.live/v1",
+    api_key="YOUR_API_KEY"
+)
+
+response = client.chat.completions.create(
+    model="mirae-free",
+    messages=[{"role": "user", "content": "오늘 중요한 소식을 알려줘"}]
+)
+
+print(response.choices[0].message.content)</pre>
+<h2>JavaScript</h2>
+<pre>const response = await fetch("https://mirae.koharu.live/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer YOUR_API_KEY"
+  },
+  body: JSON.stringify({
+    model: "mirae-free",
+    messages: [{ role: "user", content: "안녕하세요" }]
+  })
+});
+
+const data = await response.json();
+console.log(data.choices[0].message.content);</pre>
+<h2>직접 Mirae 웹앱용 API</h2>
+<p><span class="method">POST</span> <span class="route">/chat</span></p>
+<pre>{
+  "message": "최신 정보를 찾아줘",
+  "history": [],
+  "web_search": true,
+  "personality": "balanced",
+  "temperature": 0.7,
+  "max_tokens": 700
+}</pre>
+<p>이 엔드포인트는 검색 결과와 언어 감지를 포함한 Mirae 전용 응답 형식을 반환합니다.</p>
+<h2>운영 정책</h2>
+<ul><li>공개 API를 무제한으로 열면 한 사람이 서버의 모델 쿼터를 모두 소비할 수 있으므로 실제 공개 배포에서는 API 키와 레이트리밋을 권장합니다.</li><li>현재 구현은 스트리밍 응답을 제공하지 않습니다. 이후 SSE 스트리밍을 추가하면 ChatGPT와 비슷하게 글자가 생성되는 동안 바로 표시할 수 있습니다.</li></ul>
+</main></body></html>
