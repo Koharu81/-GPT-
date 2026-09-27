@@ -11,14 +11,13 @@ from pydantic import BaseModel, Field, HttpUrl
 import psycopg
 from psycopg.rows import dict_row
 
-APP_VERSION="6.0.0"
+APP_VERSION="6.0.1"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 DATABASE_URL=os.getenv("DATABASE_URL","")
-MODEL_API_URL=os.getenv("MODEL_API_URL","").rstrip("/")
-MODEL_API_KEY=os.getenv("MODEL_API_KEY","")
-MODEL_NAME=os.getenv("MODEL_NAME","Mirae-Qwen2.5-1.5B-Instruct")
+HF_TOKEN=os.getenv("HF_TOKEN","")
+HF_MODEL=os.getenv("HF_MODEL","openai/gpt-oss-120b:groq")
 NEWS_RSS="https://news.google.com/rss/search"
 RESEND_API_KEY=os.getenv("RESEND_API_KEY","")
 RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
@@ -127,7 +126,7 @@ User instructions: {req.instructions[:4000] or 'none'}.{src}{sk}"""
 
 def save_chat(uid,msg,reply,mode,sources,cid=""):
     with db() as c:
-        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id) VALUES (%s,'user',%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s)",[uid,msg,mode,MODEL_NAME,json.dumps(sources,ensure_ascii=False),cid,uid,reply,mode,MODEL_NAME,json.dumps(sources,ensure_ascii=False),cid]);c.commit()
+        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id) VALUES (%s,'user',%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s)",[uid,msg,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,uid,reply,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid]);c.commit()
 
 def set_session(resp,uid):
     tok=secrets.token_urlsafe(48); exp=datetime.now(timezone.utc)+timedelta(days=SESSION_DAYS)
@@ -194,7 +193,7 @@ async def request_signup(data):
 
 @app.get("/health")
 async def health():
-    return {"ok":True,"model":MODEL_NAME,"web_search":True,"database":bool(DATABASE_URL),"version":APP_VERSION,"email_verification":bool(RESEND_API_KEY),"email_provider":"resend_api"}
+    return {"ok":True,"model":HF_MODEL,"web_search":True,"database":bool(DATABASE_URL),"version":APP_VERSION,"email_verification":bool(RESEND_API_KEY),"email_provider":"resend_api"}
 
 @app.post("/auth/signup")
 async def signup(data:Signup):return await request_signup(data)
@@ -367,20 +366,20 @@ async def run_skill_command(message,request):
     return s,await run_skill(s,p)
 
 def model_headers():
-    return {"Authorization":f"Bearer {MODEL_API_KEY}"} if MODEL_API_KEY else {}
+    return {"Authorization":f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
 async def generate_once(msgs,temp,max_tokens):
-    if not MODEL_API_URL:raise HTTPException(503,"MODEL_API_URL is not configured on the API server.")
+    if not HF_TOKEN:raise HTTPException(503,"HF_TOKEN is not configured on the API server.")
     async with httpx.AsyncClient(timeout=180) as x:
-        r=await x.post(f"{MODEL_API_URL}/v1/chat/completions",headers=model_headers(),json={"model":MODEL_NAME,"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":False})
-    if r.status_code>=400:raise HTTPException(r.status_code,f"Local model request failed: {r.text[:500]}")
+        r=await x.post("https://router.huggingface.co/v1/chat/completions",headers=model_headers(),json={"model":HF_MODEL,"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":False})
+    if r.status_code>=400:raise HTTPException(r.status_code,f"Upstream model request failed: {r.text[:500]}")
     try:return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:raise HTTPException(502,"Invalid local model response.")
+    except Exception:raise HTTPException(502,"Invalid model response.")
 
 async def generate_stream(msgs,temp,max_tokens):
-    if not MODEL_API_URL:raise RuntimeError("MODEL_API_URL is not configured on the API server.")
+    if not HF_TOKEN:raise RuntimeError("HF_TOKEN is not configured on the API server.")
     async with httpx.AsyncClient(timeout=180) as x:
-        async with x.stream("POST",f"{MODEL_API_URL}/v1/chat/completions",headers=model_headers(),json={"model":MODEL_NAME,"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":True}) as r:
+        async with x.stream("POST","https://router.huggingface.co/v1/chat/completions",headers=model_headers(),json={"model":HF_MODEL,"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":True}) as r:
             if r.status_code>=400:raise RuntimeError((await r.aread()).decode(errors="ignore")[:500])
             async for line in r.aiter_lines():
                 if not line.startswith("data:"):continue
@@ -414,7 +413,7 @@ async def chat(req:ChatRequest,request:Request):
         return {"reply":reply,"model":"skill","language":lang(req.message),"sources":[]}
     u,sources,msgs,need=await prepare(req,request);reply=await generate_once(msgs,req.temperature,req.max_tokens)
     if u:save_chat(u["id"],req.message,reply,"web" if sources else "model",sources)
-    return {"reply":reply,"model":MODEL_NAME,"language":lang(req.message),"sources":sources}
+    return {"reply":reply,"model":HF_MODEL,"language":lang(req.message),"sources":sources}
 
 @app.post("/chat/stream")
 async def chat_stream(req:ChatRequest,request:Request):
@@ -446,7 +445,7 @@ async def chat_stream(req:ChatRequest,request:Request):
                 reply=await generate_once(msgs,req.temperature,req.max_tokens);chunks=[reply];yield event("delta",{"text":reply})
             reply="".join(chunks).strip()
             if u:save_chat(u["id"],req.message,reply,"web" if sources else "model",sources)
-            yield event("done",{"model":MODEL_NAME,"sources":sources})
+            yield event("done",{"model":HF_MODEL,"sources":sources})
         except HTTPException as e:yield event("error",{"message":e.detail})
         except Exception as e:yield event("error",{"message":str(e)[:500]})
     return StreamingResponse(gen(),media_type="text/event-stream",headers={"Cache-Control":"no-cache, no-transform","X-Accel-Buffering":"no","Connection":"keep-alive"})
@@ -491,4 +490,4 @@ async def models(authorization:str|None=Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):raise HTTPException(401,"API key required.")
     with db() as c:k=c.execute("SELECT id FROM mirae_api_keys WHERE key_hash=%s AND state='active'",[digest(authorization[7:])]).fetchone()
     if not k:raise HTTPException(401,"Invalid API key.")
-    return {"object":"list","data":[{"id":MODEL_NAME,"object":"model","owned_by":"mirae"}]}
+    return {"object":"list","data":[{"id":HF_MODEL,"object":"model","owned_by":"mirae"}]}
