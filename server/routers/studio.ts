@@ -1,7 +1,46 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
-import { createLocalSuggestion, replyFromLearningPairs } from "../studio/engine";
+
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN ?? "";
+const CLOUDFLARE_AI_MODEL = process.env.CLOUDFLARE_AI_MODEL ?? "@cf/zai-org/glm-4.7-flash";
+const CLOUDFLARE_AI_URL = CLOUDFLARE_ACCOUNT_ID
+  ? "https://api.cloudflare.com/client/v4/accounts/" + CLOUDFLARE_ACCOUNT_ID + "/ai/v1/chat/completions"
+  : "";
+
+async function generateWithCloudflare(message: string) {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) return null;
+  const response = await fetch(CLOUDFLARE_AI_URL, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + CLOUDFLARE_API_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: CLOUDFLARE_AI_MODEL,
+      messages: [
+        { role: "system", content: "You are Mirae AI, a general-purpose Korean-first assistant. Answer naturally in the user language. Use Markdown for headings, lists, emphasis, links, and fenced code blocks when useful. Never invent current facts or sources. Do not reveal private chain-of-thought." },
+        { role: "user", content: message },
+      ],
+      temperature: 0.7,
+      max_tokens: 2200,
+      stream: false,
+    }),
+  });
+  const data = await response.json().catch(() => null) as any;
+  if (!response.ok) {
+    const detail = typeof data?.errors?.[0]?.message === "string" ? data.errors[0].message : JSON.stringify(data)?.slice(0, 500) || "HTTP " + response.status;
+    throw new Error("Cloudflare Workers AI 오류: " + detail);
+  }
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) throw new Error("Cloudflare Workers AI가 빈 응답을 반환했습니다.");
+  return content.trim();
+}
+
+export async function generateStudioReply(message: string) {
+  const cloudflareReply = await generateWithCloudflare(message);
+  if (cloudflareReply) return { reply: cloudflareReply, mode: "cloudflare-ai" as const };
+  throw new Error("AI provider is not configured. Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.");
+}
+import { createLocalSuggestion } from "../studio/engine";
 import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 
 const pairInput = z.object({
@@ -16,9 +55,9 @@ export const studioRouter = router({
     send: protectedProcedure
       .input(z.object({ message: z.string().trim().min(1).max(4000) }))
       .mutation(async ({ ctx, input }) => {
-        const pairs = await db.listApprovedPairs(ctx.user.id);
-        const reply = replyFromLearningPairs(input.message, pairs);
-        const mode = "local-data" as const;
+        const generated = await generateStudioReply(input.message);
+        const reply = generated.reply;
+        const mode = generated.mode;
         await db.recordChatExchange({ userId: ctx.user.id, message: input.message, reply, mode });
         return { reply, mode };
       }),
