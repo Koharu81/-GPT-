@@ -72,8 +72,10 @@ class SkillCreate(BaseModel):
 class SkillRun(BaseModel): params:dict[str,Any]=Field(default_factory=dict)
 
 def lang(t:str):
-    n=[len(re.findall(r"[가-힣]",t)),len(re.findall(r"[ぁ-ゖァ-ヺ]",t)),len(re.findall(r"[A-Za-z]",t))]
-    return ["ko","ja","en"][n.index(max(n))]
+    ko=len(re.findall(r"[가-힣]",t));ja=len(re.findall(r"[ぁ-ゖァ-ヺ]",t))
+    if ko>=2:return "ko"
+    if ja>=2 and ko==0:return "ja"
+    return "en"
 
 def wants_web(t:str)->bool:
     t=t.strip()
@@ -118,7 +120,7 @@ def system_prompt(req,language,sources,skills):
         src="\n웹 검색 결과:\n"+"\n".join(f"- {x['title']} | {x['published']} | {x['url']} | {x['snippet']}" for x in sources)
     sk="\n사용 가능한 스킬: "+", ".join(f"/skill {x['name']} {{...}}" for x in skills) if skills else ""
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-27. {rule}
-Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels.
+Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels. If the user writes in Korean or Japanese, answer in that language even when the message contains English product names, programming terms, or code. Never switch to English merely because words like discord.py, Python, API, OpenAI, or JavaScript appear. When providing code, keep code in fenced Markdown blocks and keep the surrounding explanation in the user's language. Do not escape Markdown punctuation with backslashes unless the user explicitly asks for literal Markdown source.
 When web results are supplied, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
 User instructions: {req.instructions[:4000] or 'none'}.{src}{sk}"""
