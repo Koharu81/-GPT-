@@ -1,4 +1,4 @@
-﻿import os, re, json, time, secrets, hashlib, hmac, smtplib, socket, ipaddress, asyncio
+import os, re, json, time, secrets, hashlib, hmac, smtplib, socket, ipaddress, asyncio
 from email.message import EmailMessage
 from typing import Any
 from datetime import datetime, timedelta, timezone, date
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, HttpUrl
 import psycopg
 from psycopg.rows import dict_row
 
-APP_VERSION="5.1.0"
+APP_VERSION="5.2.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
@@ -78,8 +78,11 @@ def lang(t:str):
 def wants_web(t:str)->bool:
     t=t.strip()
     if not t or GREETING_ONLY.fullmatch(t): return False
-    if WEB_EXPLICIT.search(t): return True
-    return bool(WEB_FRESH.search(t) and WEB_CONTEXT.search(t))
+    low=t.lower()
+    explicit=("웹 검색" in low or "인터넷" in low or "검색" in low or "찾아" in low or "공식 자료" in low or "공식 사이트" in low or "링크 찾아" in low or "자료 찾아" in low)
+    fresh=any(x in low for x in ("최신","현재","지금","최근","실시간","오늘","어제","내일","이번 주","이번 달","업데이트","속보","새로 나온"))
+    context=any(x in low for x in ("뉴스","소식","정보","날씨","가격","환율","주가","시세","일정","출시","버전","패치","사건","공지","공식","순위","경기","결과","상태","영업","운영시간"))
+    return explicit or (fresh and context)
 
 def clean_query(t:str)->str:
     t=re.sub(r"(검색해줘|검색해|찾아줘|찾아봐|찾아서|알려줘|알려 줘|정리해줘|정리해 줘|알려|찾아|검색|조회해줘|조회해|확인해줘|확인해|최신|현재|지금|최근|실시간|오늘|어제|내일|이번\s*(?:주|달)|소식|뉴스|정보)"," ",t,flags=re.I)
