@@ -5,6 +5,7 @@ let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
 let chats=[],current=[],currentId=null,authMode="login",pendingSignup=null,resendTimer=null;
 let currentTitle="새 대화";
+let attachments=[];
 
 function simpleHash(value){
   let h=2166136261;
@@ -91,6 +92,76 @@ function renderEmpty(){
 function normalizeMarkdown(text){
   return String(text||"").split(/(```[\\s\\S]*?```)/g).map((part,i)=>i%2?part:part.replace(/\\([*_#~\[\]])/g,"$1")).join("");
 }
+
+function chartNumbers(values){return (values||[]).map(Number).filter(Number.isFinite)}
+function renderChart(data){
+  try{
+    const labels=(data.labels||[]).map(String);
+    const sets=(data.datasets||[]).map(d=>({label:String(d.label||"값"),data:chartNumbers(d.data)})).filter(d=>d.data.length);
+    if(!labels.length||!sets.length)return null;
+    const w=760,h=360,left=62,right=24,top=48,bottom=62,cw=w-left-right,ch=h-top-bottom;
+    const max=Math.max(1,...sets.flatMap(s=>s.data));
+    const esc=v=>escapeHtml(v),title=esc(data.title||"차트"),type=String(data.type||"bar").toLowerCase();
+    let svg="<svg class='chart-svg' viewBox='0 0 "+w+" "+h+"' role='img' aria-label='"+title+"'><text class='chart-svg-title' x='"+left+"' y='26'>"+title+"</text>";
+    for(let j=0;j<=4;j++){const y=top+ch-j*ch/4;const v=(max*j/4).toLocaleString();svg+="<line class='chart-grid' x1='"+left+"' x2='"+(left+cw)+"' y1='"+y+"' y2='"+y+"'/><text class='chart-axis' x='"+(left-8)+"' y='"+(y+4)+"' text-anchor='end'>"+esc(v)+"</text>"}
+    if(type==="line"){
+      const step=labels.length>1?cw/(labels.length-1):cw;
+      sets.forEach((s,si)=>{const pts=s.data.slice(0,labels.length).map((v,i)=>[left+i*step,top+ch-(v/max)*ch]);svg+="<polyline class='chart-line s"+(si%5)+"' points='"+pts.map(p=>p.join(",")).join(" ")+"'/>";pts.forEach(p=>svg+="<circle class='chart-point s"+(si%5)+"' cx='"+p[0]+"' cy='"+p[1]+"' r='4'/>")});
+      labels.forEach((l,i)=>{svg+="<text class='chart-axis x-label' x='"+(left+(labels.length>1?i*cw/(labels.length-1):cw/2))+"' y='"+(top+ch+28)+"' text-anchor='middle'>"+esc(l.slice(0,12))+"</text>"})
+    }else if(type==="doughnut"||type==="pie"){
+      const vals=sets[0].data.slice(0,labels.length),total=Math.max(1,vals.reduce((a,b)=>a+b,0)),cx=left+cw*.45,cy=top+ch*.48,r=74,c=2*Math.PI*r;
+      let offset=0;vals.forEach((v,i)=>{const dash=c*(Math.max(0,v)/total);svg+="<circle class='chart-donut s"+(i%5)+"' cx='"+cx+"' cy='"+cy+"' r='"+r+"' stroke-dasharray='"+dash+" "+(c-dash)+"' stroke-dashoffset='"+(-offset)+"'/>";offset+=dash});
+      labels.forEach((l,i)=>{const y=top+12+i*22;svg+="<circle class='legend-dot s"+(i%5)+"' cx='"+(left+cw*.76)+"' cy='"+y+"' r='5'/><text class='legend-text' x='"+(left+cw*.76+11)+"' y='"+(y+4)+"'>"+esc(l)+" · "+esc(String(vals[i]??0))+"</text>"})
+    }else{
+      const group=cw/labels.length,barW=Math.max(10,Math.min(42,group/(sets.length+1)));
+      labels.forEach((l,i)=>{sets.forEach((s,si)=>{const v=s.data[i]??0,x=left+i*group+group/2-(sets.length*barW)/2+si*barW,y=top+ch-(v/max)*ch,hh=top+ch-y;svg+="<rect class='chart-bar s"+(si%5)+"' x='"+x+"' y='"+y+"' width='"+Math.max(4,barW-4)+"' height='"+Math.max(0,hh)+"' rx='5'><title>"+esc(s.label)+": "+esc(String(v))+"</title></rect>"});svg+="<text class='chart-axis x-label' x='"+(left+i*group+group/2)+"' y='"+(top+ch+28)+"' text-anchor='middle'>"+esc(l.slice(0,12))+"</text>"})
+    }
+    svg+="</svg><div class='chart-legend'>"+sets.map((s,i)=>"<span><i class='legend-dot s"+(i%5)+"'></i>"+esc(s.label)+"</span>").join("")+"</div>";
+    return svg;
+  }catch{return null}
+}
+function mountCharts(el){
+  el.querySelectorAll(".code-shell").forEach(shell=>{
+    const lang=(shell.querySelector(".code-head span")?.textContent||"").trim().toLowerCase();
+    if(lang!=="mirae-chart"&&lang!=="mirae-chart-data")return;
+    const code=shell.querySelector("pre code")?.textContent||"";
+    try{const html=renderChart(JSON.parse(code));if(html){const box=document.createElement("div");box.className="chart-card";box.innerHTML=html;shell.replaceWith(box)}}catch{}
+  });
+}
+function renderAttachmentStrip(){
+  const box=$("#attachmentStrip");if(!box)return;
+  box.innerHTML="";box.classList.toggle("hidden",!attachments.length);
+  attachments.forEach((a,i)=>{
+    const el=document.createElement("div");el.className="attachment-chip";
+    const media=a.previewUrl?"<img src='"+a.previewUrl+"' alt=''>":"<span class='attachment-icon'>"+(a.type.startsWith("image/")?"IMG":"FILE")+"</span>";
+    el.innerHTML=media+"<span class='attachment-meta'><b>"+escapeHtml(a.name)+"</b><small>"+formatBytes(a.size)+(a.text?" · 텍스트 읽음":"")+"</small></span><button type='button' class='attachment-remove' data-i='"+i+"'>×</button>";
+    box.appendChild(el);
+  });
+  box.querySelectorAll(".attachment-remove").forEach(b=>b.onclick=()=>{const i=Number(b.dataset.i),a=attachments[i];if(a?.previewUrl)URL.revokeObjectURL(a.previewUrl);attachments.splice(i,1);renderAttachmentStrip()});
+}
+function formatBytes(n){if(n<1024)return n+" B";if(n<1024*1024)return (n/1024).toFixed(1)+" KB";return (n/1024/1024).toFixed(1)+" MB"}
+async function addFiles(fileList){
+  for(const file of [...fileList]){
+    if(attachments.length>=5){alert("첨부파일은 최대 5개까지 추가할 수 있습니다.");break}
+    if(file.size>10*1024*1024){alert(file.name+"은(는) 10MB를 초과합니다.");continue}
+    if(attachments.some(a=>a.name===file.name&&a.size===file.size))continue;
+    const item={name:file.name,type:file.type||"application/octet-stream",size:file.size,text:"",previewUrl:""};
+    if(file.type.startsWith("image/"))item.previewUrl=URL.createObjectURL(file);
+    else if(file.size<=400000&&(file.type.startsWith("text/")||/\.(txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|yaml|yml|xml|log|ini)$/i.test(file.name))){
+      try{item.text=(await file.text()).slice(0,20000)}catch{}
+    }
+    attachments.push(item);
+  }
+  renderAttachmentStrip();
+  if(attachments.length)$("#globalStatus").textContent=attachments.length+"개 파일 첨부됨";
+}
+function renderMessageAttachments(e,list){
+  if(!list?.length)return;
+  const box=document.createElement("div");box.className="message-attachments";
+  list.forEach(a=>{const item=document.createElement("div");item.className="message-attachment";const media=a.previewUrl?"<img src='"+a.previewUrl+"' alt=''>":"<span class='attachment-icon'>"+(String(a.type||"").startsWith("image/")?"IMG":"FILE")+"</span>";item.innerHTML=media+"<span><b>"+escapeHtml(a.name)+"</b><small>"+formatBytes(a.size)+(a.text?" · 텍스트 포함":"")+"</small></span>";box.appendChild(item)});
+  e.querySelector(".wrap").insertBefore(box,e.querySelector(".bubble"));
+}
+
 function renderMarkdown(text){
   const src=normalizeMarkdown(text);const lines=src.split("\n"),out=[];let i=0;
   const esc=v=>escapeHtml(v);const inline=v=>{let s=esc(v),links=[];s=s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,(_,label,url)=>{const i=links.push("<a href=\""+url+"\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">"+label+"</a>")-1;return "\u0000L"+i+"\u0000"});s=s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/`([^`\n]+)`/g,"<code>$1</code>");s=s.replace(/(\*\*|__)(.+?)\1/g,"<strong>$2</strong>");s=s.replace(/~~(.+?)~~/g,"<del>$1</del>");s=s.replace(/(^|[^\\w])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");s=s.replace(/\u0000L(\d+)\u0000/g,(_,i)=>links[Number(i)]);return s};
@@ -113,9 +184,10 @@ function addCodeCopy(pre){
 }
 function renderBubble(el,text){
   el.innerHTML=renderMarkdown(text);
+  mountCharts(el);
   el.querySelectorAll(".code-copy").forEach(button=>{button.onclick=async()=>{const code=button.closest(".code-shell")?.querySelector("pre code")?.textContent||button.closest("pre")?.querySelector("code")?.textContent||"";await copyText(code,button)}});
 }
-function add(role,text,sources=[],feedbackKey=""){
+function add(role,text,sources=[],feedbackKey="",messageAttachments=[]){
   const e=document.createElement("article");e.className="msg "+role;
   const name=role==="user"?(profile.name||user?.name||"나"):"Mirae";
   e.innerHTML='<div class="msg-id"><div class="avatar"></div><b class="msg-name">'+escapeHtml(name)+'</b></div><div class="wrap"><div class="bubble"></div></div>';
@@ -123,6 +195,7 @@ function add(role,text,sources=[],feedbackKey=""){
   if(role==="user")setAvatar(avatar,name,profile.avatar_url||"");else avatar.textContent="M";
   if(role==="assistant")renderBubble(e.querySelector(".bubble"),text);else e.querySelector(".bubble").textContent=text;
   if(role==="assistant"&&sources.length)renderSources(e,sources);
+  if(role==="user"&&messageAttachments.length)renderMessageAttachments(e,messageAttachments);
   if(role==="assistant"&&feedbackKey)addMessageActions(e,feedbackKey,text);
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});return e;
 }
@@ -168,7 +241,7 @@ function restoreServer(rows,convs=[]){
   for(const x of rows){
     const id=x.conversation_id||("legacy-"+x.id);
     if(!by[id])by[id]={id:id,title:x.conversation_title||titles[id]||"새 대화",messages:[]};
-    by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
+    by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
     if(by[id].title==="새 대화"&&x.role==="user")by[id].title=conversationTitle(x.content);
   }
   chats=Object.values(by).slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));
@@ -208,12 +281,13 @@ async function deleteConversation(c){
 }
 function loadChat(id){
   const c=chats.find(x=>x.id===id);if(!c)return;
-  currentId=id;currentTitle=c.title||"새 대화";current=c.messages||[];$("#messages").innerHTML="";
-  current.forEach(m=>add(m.role,m.content,m.sources||[],m.feedback_key||""));
+  currentId=id;currentTitle=c.title||"새 대화";current=c.messages||[];attachments=[];renderAttachmentStrip();$("#messages").innerHTML="";
+  current.forEach(m=>add(m.role,m.content,m.sources||[],m.feedback_key||"",m.attachments||[]));
   $("#title").textContent=currentTitle;closeSidebar();
 }
 function newChat(save=true){
   if(save&&current.length)saveLocal();
+  attachments.forEach(a=>{if(a.previewUrl)URL.revokeObjectURL(a.previewUrl)});attachments=[];renderAttachmentStrip();
   current=[];currentId=crypto.randomUUID();currentTitle="새 대화";$("#messages").innerHTML="";renderEmpty();$("#title").textContent="새 대화";closeSidebar();
 }
 function saveLocal(){
@@ -234,7 +308,7 @@ function parseSSEBlock(block,box,state){
   else if(ev==="error")throw Error(obj.message||"생성 중 오류가 발생했습니다.");
 }
 async function streamAsk(text,box){
-  const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600,conversation_id:currentId};
+  const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
   const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(!r.ok)throw Error("스트리밍 요청에 실패했습니다.");
   const type=r.headers.get("content-type")||"";
@@ -248,13 +322,17 @@ async function streamAsk(text,box){
   return {reply:box.raw||"",sources:state.sources,conversation_id:state.conversation_id,title:state.title||currentTitle};
 }
 async function ask(text){
-  text=text.trim();if(!text)return;
+  text=text.trim();if(!text&&!attachments.length)return;
+  if(!text&&attachments.length)text="첨부한 파일을 분석해줘.";
+  const sentAttachments=attachments.map(a=>({...a}));
+  attachments=[];renderAttachmentStrip();
   if(!current.length)$("#messages").innerHTML="";
-  add("user",text);current.push({role:"user",content:text});if(current.length===1&&currentTitle==="새 대화"){currentTitle=conversationTitle(text);$("#title").textContent=currentTitle}else $("#title").textContent=currentTitle;$("#input").value="";$("#send").disabled=true;
+  add("user",text,[],"",sentAttachments);current.push({role:"user",content:text,attachments:sentAttachments.map(({name,type,size,text})=>({name,type,size,text}))});if(current.length===1&&currentTitle==="새 대화"){currentTitle=conversationTitle(text);$("#title").textContent=currentTitle}else $("#title").textContent=currentTitle;$("#input").value="";$("#send").disabled=true;
+  const saved=attachments;attachments=sentAttachments;
   const box=createAssistant();
   try{const d=await streamAsk(text,box);current.push({role:"assistant",content:d.reply,sources:d.sources||[]});saveLocal()}
   catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop()}
-  finally{$("#send").disabled=false;$("#input").focus()}
+  finally{attachments=[];renderAttachmentStrip();$("#send").disabled=false;$("#input").focus()}
 }
 function openAuth(mode="login"){authMode=mode;pendingSignup=null;renderAuth();$("#authOverlay").classList.remove("hidden");$("#email").focus()}
 function closeAuth(){$("#authOverlay").classList.add("hidden")}
@@ -371,6 +449,9 @@ $("#skillForm").onsubmit=async e=>{
     e.target.reset();$("#skillMethod").value="GET";$("#globalStatus").textContent="스킬이 등록되었습니다. 채팅에서 /skill 이름 {…}으로 실행할 수 있습니다.";loadSkills();
   }catch(err){alert(err.message)}
 };
+$("#attachButton").onclick=()=>$("#fileInput").click();
+$("#fileInput").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+$("#chartButton").onclick=()=>{const input=$("#input");if(!input.value.trim())input.value="아래 숫자 데이터를 적절한 차트/그래프로 시각화해줘.\n\n";input.focus();input.dispatchEvent(new Event("input"));$("#globalStatus").textContent="차트 모드는 항상 사용 가능합니다.";};
 $("#form").onsubmit=e=>{e.preventDefault();ask($("#input").value)};
 $("#input").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(e.target.value)}};
 $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,160)+"px"};

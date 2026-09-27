@@ -55,11 +55,17 @@ class Signup(BaseModel):
 class Login(BaseModel): email:str; password:str
 class Verify(BaseModel): email:str; code:str=Field(min_length=6,max_length=6)
 class ChatMessage(BaseModel): role:str; content:str
+class ChatAttachment(BaseModel):
+    name:str=Field(min_length=1,max_length=180)
+    type:str=Field("",max_length=180)
+    size:int=Field(0,ge=0,le=10_000_000)
+    text:str=Field("",max_length=20_000)
 class ChatRequest(BaseModel):
     message:str=Field(min_length=1,max_length=12000); history:list[ChatMessage]=Field(default_factory=list)
     personality:str="balanced"; instructions:str=""; web_search:bool=True
     temperature:float=Field(.7,ge=.2,le=1.2); max_tokens:int=Field(2200,ge=64,le=3200)
     conversation_id:str|None=None
+    attachments:list[ChatAttachment]=Field(default_factory=list,max_length=5)
 class Settings(BaseModel):
     theme:str="light"; personality:str="balanced"; instructions:str=""; web_search:bool=True
     temperature:float=Field(.7,ge=.2,le=1.2)
@@ -113,9 +119,10 @@ async def search_web(t:str):
         desc=re.sub(r"<[^>]+>"," ",i.findtext("description") or "")
         out.append({"title":title,"url":link,"published":pub,"snippet":" ".join(desc.split())[:700]})
     out.sort(key=lambda x:relevance(q,x),reverse=True)
-    return out
+    scored=[x for x in out if relevance(q,x)>0]
+    return scored[:5]
 
-def system_prompt(req,language,sources,skills,memories=None,profile_data=None):
+def system_prompt(req,language,sources,skills,memories=None,profile_data=None,attachments=None):
     rule={"ko":"한국어로 자연스럽게 답하세요. 사용자가 요청하지 않는 한 다른 언어를 섞지 마세요.","ja":"自然な日本語で答えてください。","en":"Answer in natural English unless the user requests another language."}[language]
     src=""
     if sources:
@@ -125,12 +132,15 @@ def system_prompt(req,language,sources,skills,memories=None,profile_data=None):
     mem="\n기억된 사용자 정보(대화에 도움이 될 때만 사용):\n"+"\n".join(f"- {m['content']}" for m in mm) if mm else ""
     p=profile_data or {}
     profile_text="\n사용자 프로필(개인화에 도움이 될 때만 사용):\n- 이름: "+str(p.get("name",""))+"\n- 자기소개: "+str(p.get("bio",""))+"\n- 생일: "+str(p.get("birth_date",""))
-    self_info="Mirae AI service facts: public web app domain https://mirae.koharu.live; API base https://mirae.koharu.live/v1; backend is FastAPI on Railway; PostgreSQL is Neon; model provider gateway is Hugging Face Router; current configured model is "+HF_MODEL+". Features: account login, email verification, profile, personalization, themes, always-on web search, streaming responses, Markdown/code rendering, account-scoped API keys, HTTP skills, and user memory. API keys are account-scoped and stored hashed. Email verification codes expire after 5 minutes. Never claim the app has capabilities that are not listed here. This self-information is product configuration, not a substitute for live web search."
+    att=attachments or []
+    attachment_text="\n첨부파일:\n"+"\n".join(f"- {a['name']} ({a['type'] or 'unknown'}, {a['size']} bytes)"+("\n  추출된 텍스트:\n"+a['text'][:16000] if a.get('text') else "\n  이 파일은 텍스트를 추출하지 않았습니다.") for a in att) if att else ""
+    chart_rule="\n차트 규칙: 사용자가 숫자 데이터를 차트/그래프로 보여달라고 하거나 적절한 시각화를 명시적으로 원하면, 짧은 설명 뒤에 반드시 ```mirae-chart 형태의 JSON 블록을 하나 출력하세요. 형식은 {\"type\":\"bar|line|doughnut\",\"title\":\"제목\",\"labels\":[\"A\",\"B\"],\"datasets\":[{\"label\":\"값\",\"data\":[10,20]}]} 입니다. 데이터가 여러 계열이면 datasets를 여러 개 사용하세요. 숫자가 아닌 내용은 차트로 억지로 만들지 마세요."
+    self_info="Mirae AI service facts: public web app domain https://mirae.koharu.live; API base https://mirae.koharu.live/v1; backend is FastAPI on Railway; PostgreSQL is Neon; model provider gateway is Hugging Face Router; current configured model is "+HF_MODEL+". Features: account login, email verification, profile, personalization, themes, always-on web search, streaming responses, Markdown/code rendering, account-scoped API keys, HTTP skills, user memory, file attachments, and automatic charts/graphs. API keys are account-scoped and stored hashed. Email verification codes expire after 5 minutes. Never claim the app has capabilities that are not listed here. This self-information is product configuration, not a substitute for live web search."
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-27. {rule}
-Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels. If the user writes in Korean or Japanese, answer in that language even when the message contains English product names, programming terms, or code. Never switch to English merely because words like discord.py, Python, API, OpenAI, or JavaScript appear. When providing code, keep code in fenced Markdown blocks and keep the surrounding explanation in the user's language. Do not escape Markdown punctuation with backslashes unless the user explicitly asks for literal Markdown source.
+Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels. If the user writes in Korean or Japanese, answer in that language even when the message contains English product names, programming terms, or code. Never switch to English merely because words like discord.py, Python, API, OpenAI, or JavaScript appear. When providing code, keep code in fenced Markdown blocks and keep the surrounding explanation in the user's language. Do not escape Markdown punctuation with backslashes unless the user explicitly asks for literal Markdown source. When the user asks for a chart or graph, use the special fenced block ```mirae-chart with JSON fields type (bar, line, or doughnut), title, labels, and datasets; do not put the chart data into a normal code block. Attachments may contain extracted text; use that text when relevant.
 Web search is always performed for normal chat requests. Search results may be irrelevant for casual questions; ignore irrelevant results completely and do not mention them. When results are relevant, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
-Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{src}{sk}"""
+Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{attachment_text}{chart_rule}{src}{sk}"""
 
 def ensure_conversation(uid,cid,title="새 대화"):
     if not cid:cid=secrets.token_hex(16)
@@ -158,10 +168,11 @@ async def generate_title(message):
         return title or "새 대화"
     except Exception:return "새 대화"
 
-def save_chat(uid,msg,reply,mode,sources,cid=""):
+def save_chat(uid,msg,reply,mode,sources,cid="",attachments=None):
     cid=ensure_conversation(uid,cid)
+    att=json.dumps(attachments or [],ensure_ascii=False)
     with db() as c:
-        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id) VALUES (%s,'user',%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s)",[uid,msg,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,uid,reply,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid])
+        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id,attachments) VALUES (%s,'user',%s,%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s,%s)",[uid,msg,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,att,uid,reply,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,"[]"])
         c.execute("UPDATE mirae_conversations SET updated_at=now() WHERE id=%s AND user_id=%s",[cid,uid])
         c.commit()
     return cid
@@ -194,6 +205,7 @@ def init_db():
         c.execute("ALTER TABLE mirae_users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT ''")
         c.execute("ALTER TABLE mirae_users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true")
         c.execute("ALTER TABLE mirae_chat_history ADD COLUMN IF NOT EXISTS conversation_id TEXT NOT NULL DEFAULT ''")
+        c.execute("ALTER TABLE mirae_chat_history ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_email_verifications(
             id BIGSERIAL PRIMARY KEY,email TEXT NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,
             code_hash TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
@@ -352,7 +364,7 @@ async def history(request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
     with db() as c:
-        r=c.execute("""SELECT h.id,h.role,h.content,h.mode,h.model,h.sources,h.conversation_id,h.created_at,
+        r=c.execute("""SELECT h.id,h.role,h.content,h.mode,h.model,h.sources,h.conversation_id,h.attachments,h.created_at,
                               COALESCE(cv.title,'새 대화') AS conversation_title
                        FROM mirae_chat_history h
                        LEFT JOIN mirae_conversations cv ON cv.id=h.conversation_id
@@ -581,7 +593,7 @@ async def prepare(req,request):
     if need:
         try:sources=await search_web(req.message)
         except Exception:sources=[]
-    msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list,memories,profile_data)}]
+    msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list,memories,profile_data,req.attachments)}]
     msgs += [{"role":m.role,"content":m.content[:5000]} for m in req.history[-12:] if m.role in ("user","assistant") and m.content.strip()]
     msgs.append({"role":"user","content":req.message})
     return u,sources,msgs,need
@@ -599,7 +611,7 @@ async def chat(req:ChatRequest,request:Request):
     u,sources,msgs,need=await prepare(req,request);reply=await generate_once(msgs,req.temperature,req.max_tokens)
     cid=""
     if u:
-        cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "")
+        cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
         if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
     return {"reply":reply,"model":HF_MODEL,"language":lang(req.message),"sources":sources,"conversation_id":cid}
 
@@ -635,7 +647,7 @@ async def chat_stream(req:ChatRequest,request:Request):
             reply="".join(chunks).strip()
             cid=""
             if u:
-                cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "")
+                cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
                 is_first=(current_title_missing(u["id"],cid))
                 if is_first:
                     yield event("stage",{"id":"title","label":"대화 제목 정리 중"})

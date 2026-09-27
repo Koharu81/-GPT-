@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=13">
+<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=14">
 </head>
 <body>
 <div class="app">
@@ -27,13 +27,16 @@
     <form class="composer" id="form">
       <div class="composer-top">
         <div class="composer-tools">
-          <button class="tool-btn upcoming" type="button" id="attachButton" disabled title="곧 추가됩니다">＋ 이미지 · 파일 <span>곧 출시</span></button>
-          <button class="tool-btn upcoming" type="button" id="chartButton" disabled title="곧 추가됩니다">▥ 차트 · 그래프 <span>곧 출시</span></button>
+          <button class="tool-btn" type="button" id="attachButton">＋ 첨부</button>
+          <button class="tool-btn" type="button" id="chartButton">▥ 차트</button>
+          <input id="fileInput" type="file" hidden multiple accept="image/*,.txt,.md,.json,.csv,.py,.js,.ts,.tsx,.jsx,.html,.css,.sql,.yaml,.yml,.xml,.log,.ini">
         </div>
+        <div class="attachment-hint" id="attachmentHint">이미지와 파일을 최대 5개까지 첨부할 수 있습니다.</div>
       </div>
+      <div class="attachment-strip hidden" id="attachmentStrip"></div>
       <div class="composer-line"><textarea id="input" rows="1" placeholder="무엇이든 물어보세요"></textarea><button class="send" id="send" aria-label="보내기">↑</button></div>
     </form>
-    <div class="status" id="globalStatus">웹 검색은 항상 사용 · 이미지/파일 · 차트/그래프 기능은 곧 추가됩니다.</div>
+    <div class="status" id="globalStatus">웹 검색 · 차트 · 그래프 · 첨부파일 사용 가능</div>
   </div>
 </main>
 </div>
@@ -137,6 +140,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=13" defer></script>
+<script src="/app.js?v=14" defer></script>
 </body>
 </html>
