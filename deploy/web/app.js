@@ -64,14 +64,17 @@ function normalizeMarkdown(text){
   return String(text||"").split(/(```[\\s\\S]*?```)/g).map((part,i)=>i%2?part:part.replace(/\\([*_#~\[\]])/g,"$1")).join("");
 }
 function renderMarkdown(text){
-  if(!window.marked||!window.DOMPurify)return escapeHtml(text).replace(/\\n/g,"<br>");
-  marked.setOptions({gfm:true,breaks:true});
-  const raw=marked.parse(normalizeMarkdown(text));
-  const safe=DOMPurify.sanitize(raw,{USE_PROFILES:{html:true}});
-  const box=document.createElement("div");box.innerHTML=safe;
-  box.querySelectorAll("a").forEach(a=>{a.target="_blank";a.rel="noopener noreferrer nofollow"});
-  box.querySelectorAll("pre code").forEach(code=>{try{if(window.hljs)hljs.highlightElement(code)}catch{};addCodeCopy(code.parentElement)});
-  return box.innerHTML;
+  const src=normalizeMarkdown(text);const lines=src.split("\n"),out=[];let i=0;
+  const esc=v=>escapeHtml(v);const inline=v=>{let s=esc(v);s=s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/`([^`\n]+)`/g,"<code>$1</code>");s=s.replace(/(\*\*|__)(.+?)\1/g,"<strong>$2</strong>");s=s.replace(/~~(.+?)~~/g,"<del>$1</del>");s=s.replace(/(^|[^\\w])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");return s};
+  while(i<lines.length){const line=lines[i];if(!line.trim()){i++;continue}
+    if(/^```/.test(line.trim())){const lang=(line.trim().slice(3).trim()||"text").replace(/[^A-Za-z0-9_+#.-]/g,""),code=[];i++;while(i<lines.length&&!/^```/.test(lines[i].trim())){code.push(lines[i]);i++}if(i<lines.length)i++;out.push("<div class='code-shell'><div class='code-head'><span>"+esc(lang)+"</span><button type='button' class='code-copy'>복사</button></div><pre><code>"+esc(code.join("\n"))+"</code></pre></div>");continue}
+    let m=line.match(/^(#{1,6})\s+(.+)$/);if(m){const n=m[1].length;out.push("<h"+n+">"+inline(m[2])+"</h"+n+">");i++;continue}
+    if(/^[-*+]\s+/.test(line)){const b=[];while(i<lines.length&&/^[-*+]\s+/.test(lines[i])){b.push(lines[i].replace(/^[-*+]\s+/,""));i++}out.push("<ul>"+b.map(x=>"<li>"+inline(x)+"</li>").join("")+"</ul>");continue}
+    if(/^\d+\.\s+/.test(line)){const b=[];while(i<lines.length&&/^\d+\.\s+/.test(lines[i])){b.push(lines[i].replace(/^\d+\.\s+/,""));i++}out.push("<ol>"+b.map(x=>"<li>"+inline(x)+"</li>").join("")+"</ol>");continue}
+    if(/^>\s?/.test(line)){const b=[];while(i<lines.length&&/^>\s?/.test(lines[i])){b.push(lines[i].replace(/^>\s?/,""));i++}out.push("<blockquote>"+b.map(inline).join("<br>")+"</blockquote>");continue}
+    if(i+1<lines.length&&line.includes("|")&&lines[i+1].includes("|")){const h=line.split("|").slice(1,-1),sep=lines[i+1].split("|").slice(1,-1);if(h.length&&h.length===sep.length&&sep.every(x=>/^\s*:?-{3,}:?\s*$/.test(x))){let html="<div class='md-table-wrap'><table><thead><tr>"+h.map(x=>"<th>"+inline(x.trim())+"</th>").join("")+"</tr></thead><tbody>";i+=2;while(i<lines.length&&lines[i].includes("|")&&lines[i].trim()){const c=lines[i].split("|").slice(1,-1);if(c.length!==h.length)break;html+="<tr>"+c.map(x=>"<td>"+inline(x.trim())+"</td>").join("")+"</tr>";i++}out.push(html+"</tbody></table></div>");continue}}
+    const p=[line];i++;while(i<lines.length&&lines[i].trim()&&!/^(#{1,6})\s+/.test(lines[i])&&!/^```/.test(lines[i].trim())&&!/^[-*+]\s+/.test(lines[i])&&!/^\d+\.\s+/.test(lines[i])&&!/^>\s?/.test(lines[i])){p.push(lines[i]);i++}out.push("<p>"+p.map(inline).join("<br>")+"</p>");
+  }return out.join("");
 }
 function addCodeCopy(pre){
   if(pre.querySelector(".code-copy"))return;
