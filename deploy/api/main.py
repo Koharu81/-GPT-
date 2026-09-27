@@ -20,13 +20,9 @@ HF_TOKEN=os.getenv("HF_TOKEN","")
 HF_MODEL=os.getenv("HF_MODEL","openai/gpt-oss-120b:groq")
 HF_URL="https://router.huggingface.co/v1/chat/completions"
 NEWS_RSS="https://news.google.com/rss/search"
-SMTP_HOST=os.getenv("SMTP_HOST","")
-SMTP_PORT=int(os.getenv("SMTP_PORT","587"))
-SMTP_USERNAME=os.getenv("SMTP_USERNAME","admin@koharu.live")
-SMTP_PASSWORD=os.getenv("SMTP_PASSWORD","")
-SMTP_FROM=os.getenv("SMTP_FROM","admin@koharu.live")
-SMTP_USE_TLS=os.getenv("SMTP_USE_TLS","true").lower() in {"1","true","yes","on"}
-SMTP_USE_SSL=os.getenv("SMTP_USE_SSL","false").lower() in {"1","true","yes","on"}
+RESEND_API_KEY=os.getenv("RESEND_API_KEY","")
+RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
+RESEND_URL="https://api.resend.com/emails"
 SESSION_DAYS=30
 
 WEB_EXPLICIT=re.compile(r"(웹\s*검색|인터넷(?:에서)?|검색(?:해|해줘|해봐|해서|하고|결과)?|찾아(?:줘|봐|서|서 알려)|공식\s*(?:사이트|자료|문서|페이지)|링크\s*(?:찾|알려)|자료\s*(?:찾|검색))",re.I)
@@ -156,16 +152,20 @@ async def startup():
     except Exception:pass
 
 def send_code(to,code):
-    if not SMTP_HOST or not SMTP_PASSWORD:raise RuntimeError("SMTP is not configured.")
-    m=EmailMessage();m["Subject"]="[Mirae AI] 이메일 인증 코드";m["From"]=SMTP_FROM;m["To"]=to
-    m.set_content(f"Mirae AI 인증 코드: {code}\n\n이 코드는 5분 후 만료됩니다.")
-    m.add_alternative(f"<div style='font-family:Arial;padding:30px'><h2>Mirae AI 이메일 인증</h2><p>인증 코드를 입력하세요.</p><div style='font-size:32px;font-weight:700;letter-spacing:8px'>{code}</div><p>이 코드는 <b>5분 후 만료</b>됩니다.</p></div>",subtype="html")
-    if SMTP_USE_SSL or SMTP_PORT==465:
-        with smtplib.SMTP_SSL(SMTP_HOST,SMTP_PORT,timeout=15) as s:s.login(SMTP_USERNAME,SMTP_PASSWORD);s.send_message(m)
-    else:
-        with smtplib.SMTP(SMTP_HOST,SMTP_PORT,timeout=15) as s:
-            if SMTP_USE_TLS:s.starttls()
-            s.login(SMTP_USERNAME,SMTP_PASSWORD);s.send_message(m)
+    if not RESEND_API_KEY:raise RuntimeError("RESEND_API_KEY is not configured.")
+    payload={
+        "from":RESEND_FROM,
+        "to":[to],
+        "subject":"[Mirae AI] 이메일 인증 코드",
+        "text":f"Mirae AI 인증 코드: {code}\n\n이 코드는 5분 후 만료됩니다.",
+        "html":f"<div style='font-family:Arial,sans-serif;padding:30px'><h2>Mirae AI 이메일 인증</h2><p>인증 코드를 입력하세요.</p><div style='font-size:32px;font-weight:700;letter-spacing:8px'>{code}</div><p>이 코드는 <b>5분 후 만료</b>됩니다.</p></div>",
+        "tags":[{"name":"category","value":"confirm_email"}]
+    }
+    with httpx.Client(timeout=20) as x:
+        r=x.post(RESEND_URL,headers={"Authorization":f"Bearer {RESEND_API_KEY}","Content-Type":"application/json"},json=payload)
+    if r.status_code>=400:
+        detail=r.text.replace(RESEND_API_KEY,"[REDACTED]")[:500]
+        raise RuntimeError(f"Resend API {r.status_code}: {detail}")
 
 async def request_signup(data):
     email=data.email.strip().lower()
@@ -180,14 +180,14 @@ async def request_signup(data):
     try:await asyncio.to_thread(send_code,email,code)
     except Exception as e:
         with db() as c:c.execute("DELETE FROM mirae_email_verifications WHERE email=%s",[email]);c.commit()
-        detail=str(e).replace(SMTP_PASSWORD,"[REDACTED]")[:400]
-        print(f"SMTP_SEND_ERROR host={SMTP_HOST} port={SMTP_PORT} user={SMTP_USERNAME} from={SMTP_FROM}: {detail}",flush=True)
-        raise HTTPException(503,f"인증 메일을 보내지 못했습니다. SMTP 오류: {type(e).__name__}: {detail}")
+        detail=str(e).replace(RESEND_API_KEY,"[REDACTED]")[:500]
+        print(f"EMAIL_SEND_ERROR provider=resend_api from={RESEND_FROM}: {detail}",flush=True)
+        raise HTTPException(503,f"인증 메일을 보내지 못했습니다. Resend 오류: {type(e).__name__}: {detail}")
     return {"verification_required":True,"expires_in":300}
 
 @app.get("/health")
 async def health():
-    return {"ok":True,"model":HF_MODEL,"web_search":True,"database":bool(DATABASE_URL),"version":APP_VERSION,"email_verification":bool(SMTP_HOST and SMTP_PASSWORD)}
+    return {"ok":True,"model":HF_MODEL,"web_search":True,"database":bool(DATABASE_URL),"version":APP_VERSION,"email_verification":bool(RESEND_API_KEY),"email_provider":"resend_api"}
 
 @app.post("/auth/signup")
 async def signup(data:Signup):return await request_signup(data)
