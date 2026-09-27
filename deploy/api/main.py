@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, HttpUrl
 import psycopg
 from psycopg.rows import dict_row
 
-APP_VERSION="6.1.0"
+APP_VERSION="6.2.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
@@ -83,13 +83,7 @@ def lang(t:str):
     return "en"
 
 def wants_web(t:str)->bool:
-    t=t.strip()
-    if not t or GREETING_ONLY.fullmatch(t): return False
-    low=t.lower()
-    explicit=("웹 검색" in low or "인터넷" in low or "검색" in low or "찾아" in low or "공식 자료" in low or "공식 사이트" in low or "링크 찾아" in low or "자료 찾아" in low)
-    fresh=any(x in low for x in ("최신","현재","지금","최근","실시간","오늘","어제","내일","이번 주","이번 달","업데이트","속보","새로 나온"))
-    context=any(x in low for x in ("뉴스","소식","정보","날씨","가격","환율","주가","시세","일정","출시","버전","패치","사건","공지","공식","순위","경기","결과","상태","영업","운영시간"))
-    return explicit or (fresh and context)
+    return bool(t.strip())
 
 def clean_query(t:str)->str:
     t=re.sub(r"(검색해줘|검색해|찾아줘|찾아봐|찾아서|알려줘|알려 줘|정리해줘|정리해 줘|알려|찾아|검색|조회해줘|조회해|확인해줘|확인해|최신|현재|지금|최근|실시간|오늘|어제|내일|이번\s*(?:주|달)|소식|뉴스|정보)"," ",t,flags=re.I)
@@ -109,14 +103,17 @@ async def search_web(t:str):
         r.raise_for_status()
     import xml.etree.ElementTree as ET
     root=ET.fromstring(r.text); out=[]
-    for i in root.findall(".//item")[:12]:
+    seen=set()
+    for i in root.findall(".//item"):
         title=" ".join((i.findtext("title") or "").split())
         link=(i.findtext("link") or "").strip(); pub=(i.findtext("pubDate") or "").strip()
+        if not title and not link:continue
+        if link and link in seen:continue
+        if link:seen.add(link)
         desc=re.sub(r"<[^>]+>"," ",i.findtext("description") or "")
-        out.append({"title":title,"url":link,"published":pub,"snippet":" ".join(desc.split())[:500]})
+        out.append({"title":title,"url":link,"published":pub,"snippet":" ".join(desc.split())[:700]})
     out.sort(key=lambda x:relevance(q,x),reverse=True)
-    scored=[x for x in out if relevance(q,x)>=1]
-    return scored[:3]
+    return out
 
 def system_prompt(req,language,sources,skills,memories=None,profile_data=None):
     rule={"ko":"한국어로 자연스럽게 답하세요. 사용자가 요청하지 않는 한 다른 언어를 섞지 마세요.","ja":"自然な日本語で答えてください。","en":"Answer in natural English unless the user requests another language."}[language]
@@ -128,10 +125,10 @@ def system_prompt(req,language,sources,skills,memories=None,profile_data=None):
     mem="\n기억된 사용자 정보(대화에 도움이 될 때만 사용):\n"+"\n".join(f"- {m['content']}" for m in mm) if mm else ""
     p=profile_data or {}
     profile_text="\n사용자 프로필(개인화에 도움이 될 때만 사용):\n- 이름: "+str(p.get("name",""))+"\n- 자기소개: "+str(p.get("bio",""))+"\n- 생일: "+str(p.get("birth_date",""))
-    self_info="Mirae AI service facts: public web app domain https://mirae.koharu.live; API base https://mirae.koharu.live/v1; backend is FastAPI on Railway; PostgreSQL is Neon; model provider gateway is Hugging Face Router; current configured model is "+HF_MODEL+". Features: account login, email verification, profile, personalization, themes, conditional web search, streaming responses, Markdown/code rendering, account-scoped API keys, HTTP skills, and user memory. API keys are account-scoped and stored hashed. Email verification codes expire after 5 minutes. Never claim the app has capabilities that are not listed here. This self-information is product configuration, not a substitute for live web search."
+    self_info="Mirae AI service facts: public web app domain https://mirae.koharu.live; API base https://mirae.koharu.live/v1; backend is FastAPI on Railway; PostgreSQL is Neon; model provider gateway is Hugging Face Router; current configured model is "+HF_MODEL+". Features: account login, email verification, profile, personalization, themes, always-on web search, streaming responses, Markdown/code rendering, account-scoped API keys, HTTP skills, and user memory. API keys are account-scoped and stored hashed. Email verification codes expire after 5 minutes. Never claim the app has capabilities that are not listed here. This self-information is product configuration, not a substitute for live web search."
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-27. {rule}
 Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels. If the user writes in Korean or Japanese, answer in that language even when the message contains English product names, programming terms, or code. Never switch to English merely because words like discord.py, Python, API, OpenAI, or JavaScript appear. When providing code, keep code in fenced Markdown blocks and keep the surrounding explanation in the user's language. Do not escape Markdown punctuation with backslashes unless the user explicitly asks for literal Markdown source.
-When web results are supplied, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
+Web search is always performed for normal chat requests. Search results may be irrelevant for casual questions; ignore irrelevant results completely and do not mention them. When results are relevant, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
 Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{src}{sk}"""
 
@@ -142,7 +139,14 @@ def ensure_conversation(uid,cid,title="새 대화"):
         c.commit()
     return cid
 
+def make_conversation_title(message):
+    text=re.sub(r"\s+"," ",str(message or "")).strip()
+    text=re.sub(r"^#+\s*","",text)
+    text=re.sub(r"^\s*[>*`-]+\s*","",text)
+    return text[:60].rstrip() or "새 대화"
+
 async def generate_title(message):
+    return make_conversation_title(message)
     if not HF_TOKEN:return "새 대화"
     prompt=[
         {"role":"system","content":"Create a very short Korean chat title from the user's first message. 2 to 8 Korean words. No quotes, no Markdown, no punctuation at the end, no explanation."},
@@ -340,8 +344,8 @@ async def put_settings(data:Settings,request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
     with db() as c:
-        c.execute("INSERT INTO mirae_user_settings(user_id,theme,personality,instructions,web_search,temperature) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(user_id) DO UPDATE SET theme=EXCLUDED.theme,personality=EXCLUDED.personality,instructions=EXCLUDED.instructions,web_search=EXCLUDED.web_search,temperature=EXCLUDED.temperature,updated_at=now()",[u["id"],data.theme,data.personality,data.instructions,data.web_search,data.temperature]);c.commit()
-    return data.model_dump()
+        c.execute("INSERT INTO mirae_user_settings(user_id,theme,personality,instructions,web_search,temperature) VALUES (%s,%s,%s,%s,true,%s) ON CONFLICT(user_id) DO UPDATE SET theme=EXCLUDED.theme,personality=EXCLUDED.personality,instructions=EXCLUDED.instructions,web_search=true,temperature=EXCLUDED.temperature,updated_at=now()",[u["id"],data.theme,data.personality,data.instructions,data.temperature]);c.commit()
+    result=data.model_dump();result["web_search"]=True;return result
 
 @app.get("/history")
 async def history(request:Request):
@@ -359,7 +363,16 @@ async def history(request:Request):
 async def conversations(request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
-    with db() as c:return c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
+    with db() as c:
+        rows=c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
+        for row in rows:
+            if row["title"]=="새 대화":
+                first=c.execute("SELECT content FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s ORDER BY created_at ASC,id ASC LIMIT 1",[u["id"],row["id"]]).fetchone()
+                if first:
+                    title=make_conversation_title(first["content"])
+                    c.execute("UPDATE mirae_conversations SET title=%s WHERE id=%s AND user_id=%s",[title,row["id"],u["id"]]);row["title"]=title
+        c.commit()
+    return rows
 
 @app.put("/conversations/{conversation_id}")
 async def rename_conversation(conversation_id:str,data:ConversationRename,request:Request):
@@ -558,7 +571,7 @@ async def generate_stream(msgs,temp,max_tokens):
 def event(name,data):return f"event: {name}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n"
 
 async def prepare(req,request):
-    u=session_user(request);sources=[];need=req.web_search and wants_web(req.message);skill_list=[];memories=[];profile_data={}
+    u=session_user(request);sources=[];need=wants_web(req.message);skill_list=[];memories=[];profile_data={}
     if u:
         with db() as c:
             user_row=c.execute("SELECT name,bio,birth_date FROM mirae_users WHERE id=%s",[u["id"]]).fetchone()

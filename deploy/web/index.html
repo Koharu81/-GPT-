@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=12">
+<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=13">
 </head>
 <body>
 <div class="app">
@@ -25,10 +25,15 @@
   <section class="chat" id="chat"><div class="inner" id="messages"></div></section>
   <div class="composer-wrap">
     <form class="composer" id="form">
-      <textarea id="input" rows="1" placeholder="무엇이든 물어보세요"></textarea>
-      <button class="send" id="send" aria-label="보내기">↑</button>
+      <div class="composer-top">
+        <div class="composer-tools">
+          <button class="tool-btn upcoming" type="button" id="attachButton" disabled title="곧 추가됩니다">＋ 이미지 · 파일 <span>곧 출시</span></button>
+          <button class="tool-btn upcoming" type="button" id="chartButton" disabled title="곧 추가됩니다">▥ 차트 · 그래프 <span>곧 출시</span></button>
+        </div>
+      </div>
+      <div class="composer-line"><textarea id="input" rows="1" placeholder="무엇이든 물어보세요"></textarea><button class="send" id="send" aria-label="보내기">↑</button></div>
     </form>
-    <div class="status" id="globalStatus">웹 검색은 최신 정보가 필요할 때만 자동으로 사용됩니다.</div>
+    <div class="status" id="globalStatus">웹 검색은 항상 사용 · 이미지/파일 · 차트/그래프 기능은 곧 추가됩니다.</div>
   </div>
 </main>
 </div>
@@ -67,7 +72,7 @@
       <div class="setting-head"><div><div class="eyebrow" id="settingEyebrow">GENERAL</div><h2 id="settingTitle">일반</h2></div><button class="icon" id="closeSettings">×</button></div>
 
       <div class="page" id="page-general">
-        <div class="setting-row"><div><b>웹 검색</b><small>최신·현재 정보나 명시적인 검색 요청에서만 사용합니다.</small></div><select id="web"><option value="true">켜짐</option><option value="false">꺼짐</option></select></div>
+        <div class="setting-row"><div><b>웹 검색</b><small>일반 대화에서도 항상 웹 검색을 수행합니다. 질문과 관련 없는 검색 결과는 답변에 사용하지 않습니다.</small></div><select id="web" disabled><option value="true">항상 사용</option></select></div>
         <div class="setting-row"><div><b>답변 스타일</b><small>Mirae의 기본 응답 성격입니다.</small></div><select id="personality"><option value="balanced">균형 잡힌</option><option value="friendly">친근한</option><option value="professional">전문적인</option><option value="concise">간결한</option><option value="creative">창의적인</option></select></div>
       </div>
 
@@ -132,6 +137,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=12" defer></script>
+<script src="/app.js?v=13" defer></script>
 </body>
 </html>

@@ -15,6 +15,12 @@ function simpleHash(value){
   }
   return (h>>>0).toString(16).padStart(8,"0");
 }
+function conversationTitle(text){
+  let s=String(text||"").replace(/```[\\s\\S]*?```/g," ");
+  s=s.replace(/^#\\s*/gm,"");
+  s=s.replace(/\\s+/g," ").trim();
+  return (s.slice(0,54)+(s.length>54?"…":""))||"새 대화";
+}
 
 async function req(path,opt={}){
   const r=await fetch(API+path,{credentials:"include",...opt,headers:{"Content-Type":"application/json",...(opt.headers||{})}});
@@ -163,6 +169,7 @@ function restoreServer(rows,convs=[]){
     const id=x.conversation_id||("legacy-"+x.id);
     if(!by[id])by[id]={id:id,title:x.conversation_title||titles[id]||"새 대화",messages:[]};
     by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
+    if(by[id].title==="새 대화"&&x.role==="user")by[id].title=conversationTitle(x.content);
   }
   chats=Object.values(by).slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
@@ -243,7 +250,7 @@ async function streamAsk(text,box){
 async function ask(text){
   text=text.trim();if(!text)return;
   if(!current.length)$("#messages").innerHTML="";
-  add("user",text);current.push({role:"user",content:text});$("#title").textContent=currentTitle==="새 대화"?"대화 중":currentTitle;$("#input").value="";$("#send").disabled=true;
+  add("user",text);current.push({role:"user",content:text});if(current.length===1&&currentTitle==="새 대화"){currentTitle=conversationTitle(text);$("#title").textContent=currentTitle}else $("#title").textContent=currentTitle;$("#input").value="";$("#send").disabled=true;
   const box=createAssistant();
   try{const d=await streamAsk(text,box);current.push({role:"assistant",content:d.reply,sources:d.sources||[]});saveLocal()}
   catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop()}
