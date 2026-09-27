@@ -16,7 +16,12 @@ app.add_middleware(
 )
 
 HF_TOKEN = os.getenv("HF_TOKEN", "")
-HF_MODEL = os.getenv("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct:fastest")
+# Hugging Face Inference Providers may not expose every Hub model to every
+# enabled provider. Use an explicitly provider-pinned chat model by default.
+# This also prevents an old Railway HF_MODEL value from breaking deployment.
+HF_MODEL = os.getenv("HF_MODEL", "openai/gpt-oss-120b:groq")
+if HF_MODEL.startswith("Qwen/Qwen2.5-7B-Instruct"):
+    HF_MODEL = "openai/gpt-oss-120b:groq"
 BING_URL = "https://www.bing.com/search"
 
 class Message(BaseModel):
