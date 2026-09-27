@@ -6,6 +6,16 @@ let settings={theme:"light",personality:"balanced",instructions:"",web_search:tr
 let chats=[],current=[],currentId=null,authMode="login",pendingSignup=null,resendTimer=null;
 let currentTitle="새 대화";
 
+function simpleHash(value){
+  let h=2166136261;
+  const s=String(value??"");
+  for(let i=0;i<s.length;i++){
+    h^=s.charCodeAt(i);
+    h=Math.imul(h,16777619);
+  }
+  return (h>>>0).toString(16).padStart(8,"0");
+}
+
 async function req(path,opt={}){
   const r=await fetch(API+path,{credentials:"include",...opt,headers:{"Content-Type":"application/json",...(opt.headers||{})}});
   const d=await r.json().catch(()=>({}));
