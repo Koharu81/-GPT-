@@ -178,9 +178,11 @@ async def request_signup(data):
         c.execute("DELETE FROM mirae_email_verifications WHERE email=%s",[email])
         c.execute("INSERT INTO mirae_email_verifications(email,name,password_hash,code_hash,expires_at) VALUES (%s,%s,%s,%s,%s)",[email,data.name.strip(),phash(data.password),digest(code),datetime.now(timezone.utc)+timedelta(minutes=5)]);c.commit()
     try:await asyncio.to_thread(send_code,email,code)
-    except Exception:
+    except Exception as e:
         with db() as c:c.execute("DELETE FROM mirae_email_verifications WHERE email=%s",[email]);c.commit()
-        raise HTTPException(503,"인증 메일을 보내지 못했습니다. SMTP 설정을 확인해주세요.")
+        detail=str(e).replace(SMTP_PASSWORD,"[REDACTED]")[:400]
+        print(f"SMTP_SEND_ERROR host={SMTP_HOST} port={SMTP_PORT} user={SMTP_USERNAME} from={SMTP_FROM}: {detail}",flush=True)
+        raise HTTPException(503,f"인증 메일을 보내지 못했습니다. SMTP 오류: {type(e).__name__}: {detail}")
     return {"verification_required":True,"expires_in":300}
 
 @app.get("/health")
