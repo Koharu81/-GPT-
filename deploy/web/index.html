@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mirae AI</title>
 <style>
-:root{--bg:#fff;--panel:#f7f7f8;--text:#202123;--muted:#6b7280;--line:#e5e7eb;--soft:#f3f4f6;--accent:#111827;--sidebar:272px}
+:root{--bg:#fff;--panel:#f7f7f8;--text:#202123;--muted:#6b7280;--line:#e5e7eb;--soft:#f3f4f6;--accent:#111827;--sidebar:272px}html.dark{--bg:#212121;--panel:#171717;--text:#ececec;--muted:#a1a1aa;--line:#343434;--soft:#2a2a2a;--accent:#fff}
 *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,textarea,input,select{font:inherit}button{cursor:pointer}
-.app{height:100%;display:flex;overflow:hidden}.sidebar{width:var(--sidebar);flex:none;background:#f7f7f8;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px}.brand{display:flex;align-items:center;gap:10px;padding:10px 10px 16px;font-weight:750;font-size:16px}.brand-mark{width:28px;height:28px;border-radius:9px;background:#111;color:#fff;display:grid;place-items:center;font-size:13px}
+.theme-dark .suggestion,.theme-dark .new-chat,.theme-dark .icon{background:#2a2a2a;color:#eee}.theme-dark .sidebar{background:#171717}.theme-dark .topbar{background:rgba(33,33,33,.9)}.theme-dark .composer-wrap{background:linear-gradient(transparent,#212121 30%)}.theme-dark .composer,.theme-dark .panel{background:#2a2a2a;color:#eee}.theme-dark .composer textarea,.theme-dark .panel input,.theme-dark .panel textarea,.theme-dark .panel select{color:#eee;background:#2a2a2a}.theme-dark .user .bubble{background:#343434}.app{height:100%;display:flex;overflow:hidden}.sidebar{width:var(--sidebar);flex:none;background:#f7f7f8;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px}.brand{display:flex;align-items:center;gap:10px;padding:10px 10px 16px;font-weight:750;font-size:16px}.brand-mark{width:28px;height:28px;border-radius:9px;background:#111;color:#fff;display:grid;place-items:center;font-size:13px}
 .new-chat{width:100%;border:1px solid var(--line);background:#fff;border-radius:11px;padding:9px 12px;text-align:left;font-weight:600}.new-chat:hover,.history-item:hover{background:#eee}.section-label{font-size:11px;color:#8a8a8a;margin:18px 9px 7px}.history{overflow:auto;flex:1}.history-item{width:100%;border:0;background:transparent;border-radius:9px;padding:9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#333;margin-bottom:2px}.history-item.active{background:#e9e9ea;font-weight:600}.side-bottom{border-top:1px solid var(--line);padding-top:10px;margin-top:8px}.side-link{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;border-radius:9px;padding:10px;color:#444;text-align:left}.side-link:hover{background:#eee}
 .main{min-width:0;flex:1;display:flex;flex-direction:column}.topbar{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex:none;background:rgba(255,255,255,.9);backdrop-filter:blur(15px)}.top-title{font-weight:650}.top-actions{display:flex;gap:7px}.icon{width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:#fff}.icon:hover{background:#f4f4f4}
 .chat{flex:1;overflow:auto}.chat-inner{width:min(860px,calc(100% - 32px));margin:auto;padding:35px 0 150px}.hero{min-height:58vh;display:flex;flex-direction:column;justify-content:center}.hero h1{font-size:42px;letter-spacing:-.055em;margin:0 0 10px}.hero p{color:var(--muted);margin:0}.suggestions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:25px}.suggestion{padding:13px 15px;text-align:left;border:1px solid var(--line);border-radius:13px;background:#fff}.suggestion:hover{background:#f7f7f7}
@@ -25,12 +25,12 @@
   <div class="section-label">대화 기록</div>
   <div class="history" id="historyList"></div>
   <div class="side-bottom">
-    <button class="side-link" id="apiDocs">⌘ API 문서</button>
+    <button class="side-link" id="apiDocs">⌘ API 문서</button><button class="side-link" id="apiKeys">⌕ API 키</button>
     <button class="side-link" id="settings">⚙ 설정</button>
   </div>
 </aside>
 <main class="main">
-<header class="topbar"><div class="top-title" id="topTitle">새 대화</div><div class="top-actions"><button class="icon" id="mobileNew" title="새 대화">＋</button></div></header>
+<header class="topbar"><div class="top-title" id="topTitle">새 대화</div><div class="top-actions"><button class="icon" id="loginBtn" title="로그인">↪</button><button class="icon" id="mobileNew" title="새 대화">＋</button></div></header>
 <section class="chat" id="chat"><div class="chat-inner" id="messages"></div></section>
 <div class="composer-wrap">
 <form class="composer" id="form"><textarea id="input" rows="1" placeholder="Mirae에게 무엇이든 물어보세요"></textarea><button class="send" id="send" type="submit">↑</button></form>
@@ -39,20 +39,21 @@
 </main>
 <div class="panel hidden" id="panel">
 <div class="row"><h2>설정</h2><button class="icon" id="close">×</button></div>
-<div class="field"><label>인격</label><select id="personality"><option value="balanced">균형 잡힌</option><option value="friendly">친근한</option><option value="professional">전문적인</option><option value="concise">간결한</option><option value="creative">창의적인</option></select></div>
+<div class="field"><label>디스플레이</label><select id="theme"><option value="system">시스템 맞춤</option><option value="dark">다크</option><option value="light">화이트</option></select></div><div class="field"><label>인격</label><select id="personality"><option value="balanced">균형 잡힌</option><option value="friendly">친근한</option><option value="professional">전문적인</option><option value="concise">간결한</option><option value="creative">창의적인</option></select></div>
 <div class="field"><label>개인 지침</label><textarea id="instructions" placeholder="Mirae가 대화할 때 지켜야 할 방식을 적어주세요."></textarea></div>
 <div class="field"><label class="switch"><input type="checkbox" id="web" checked> 웹 검색 기본 사용</label></div>
 <div class="field"><label>창의성 <span id="tempValue">0.70</span></label><input id="temp" type="range" min=".2" max="1.2" step=".05" value=".7"></div>
 </div>
+<div class="panel hidden" id="accountPanel"><div class="row"><h2>로그인</h2><button class="icon" id="accountClose">×</button></div><p style="color:var(--muted);font-size:12px">Mirae 계정으로 로그인하면 대화, API 키, 설정을 계정에 연결할 수 있습니다.</p><div class="field"><label>이메일</label><input id="loginEmail" type="email" placeholder="you@example.com"></div><div class="field"><label>비밀번호</label><input id="loginPassword" type="password" placeholder="비밀번호"></div><button class="new-chat" id="loginSubmit" style="background:#111;color:#fff;text-align:center">로그인</button><button class="side-link" id="signupBtn" style="justify-content:center;margin-top:6px">계정 만들기</button><p id="authStatus" style="color:#b45309;font-size:11px;margin-top:12px">계정 인증 서버 연결을 준비 중입니다.</p></div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
 const messages=$("#messages"),input=$("#input"),send=$("#send"),historyList=$("#historyList"),topTitle=$("#topTitle");
 const settings=JSON.parse(localStorage.getItem("mirae-settings")||"{}");
-$("#personality").value=settings.personality||"balanced";$("#instructions").value=settings.instructions||"";
+$("#theme").value=settings.theme||"system";$("#personality").value=settings.personality||"balanced";$("#instructions").value=settings.instructions||"";
 $("#web").checked=settings.web!==false;$("#temp").value=settings.temperature||".7";$("#tempValue").textContent=Number($("#temp").value).toFixed(2);
 let chats=JSON.parse(localStorage.getItem("mirae-chats")||"[]");let currentId=null;let history=[];
-const saveSettings=()=>localStorage.setItem("mirae-settings",JSON.stringify({personality:$("#personality").value,instructions:$("#instructions").value,web:$("#web").checked,temperature:Number($("#temp").value)}));
+const saveSettings=()=>localStorage.setItem("mirae-settings",JSON.stringify({theme:$("#theme").value,personality:$("#personality").value,instructions:$("#instructions").value,web:$("#web").checked,temperature:Number($("#temp").value)})); function applyTheme(){const t=$("#theme").value;document.documentElement.classList.toggle("dark",t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches));document.body.classList.toggle("theme-dark",document.documentElement.classList.contains("dark"));} applyTheme();
 function persistChats(){localStorage.setItem("mirae-chats",JSON.stringify(chats.slice(-80)));}
 function renderHistory(){historyList.innerHTML="";[...chats].reverse().forEach(c=>{const b=document.createElement("button");b.className="history-item"+(c.id===currentId?" active":"");b.textContent=c.title||"새 대화";b.onclick=()=>loadChat(c.id);historyList.appendChild(b)})}
 function renderEmpty(){messages.innerHTML='<section class="hero"><h1>무엇을 도와드릴까요?</h1><p>질문, 아이디어, 학습, 창작, 게임, 번역, 분석까지 자연스럽게 이어가세요.</p><div class="suggestions"><button class="suggestion" data-prompt="최신 정보를 찾아서 오늘 중요한 소식을 간단히 정리해줘">최신 정보<br><small>웹 검색으로 현재 소식을 확인</small></button><button class="suggestion" data-prompt="새로운 게임 아이디어를 하나 만들고 구체적으로 발전시켜줘">아이디어<br><small>게임이나 창작 아이디어 발전</small></button><button class="suggestion" data-prompt="어려운 개념 하나를 중학생도 이해할 수 있게 설명해줘">학습<br><small>복잡한 개념을 쉽게 이해</small></button><button class="suggestion" data-prompt="자연스러운 한국어 글을 하나 작성해줘">글쓰기<br><small>자연스러운 문장과 글 작성</small></button></div></section>';document.querySelectorAll("[data-prompt]").forEach(b=>b.onclick=()=>ask(b.dataset.prompt));}
@@ -70,7 +71,7 @@ const data=await response.json();if(!response.ok)throw new Error(data.detail||"A
 thinking.remove();addMessage("assistant",data.reply,data.sources||[]);history.push({role:"assistant",content:data.reply,sources:data.sources||[]});saveCurrent();
 }catch(error){thinking.remove();addMessage("assistant","오류가 발생했습니다. "+error.message);history.pop();}finally{setBusy(false);input.focus();}}
 $("#form").addEventListener("submit",e=>{e.preventDefault();ask(input.value)});input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(input.value)}});input.addEventListener("input",()=>{input.style.height="auto";input.style.height=Math.min(input.scrollHeight,180)+"px"});
-$("#newChat").onclick=newChat;$("#mobileNew").onclick=newChat;$("#settings").onclick=()=>$("#panel").classList.toggle("hidden");$("#close").onclick=()=>$("#panel").classList.add("hidden");$("#apiDocs").onclick=()=>location.href="/api-docs.html";
+$("#newChat").onclick=newChat;$("#mobileNew").onclick=newChat;$("#theme").addEventListener("change",()=>{applyTheme();saveSettings()});matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{if($("#theme").value==="system")applyTheme()});$("#loginBtn").onclick=()=>$("#accountPanel").classList.toggle("hidden");$("#accountClose").onclick=()=>$("#accountPanel").classList.add("hidden");$("#apiKeys").onclick=()=>{location.href="/api-keys"};$("#loginSubmit").onclick=()=>{$("#authStatus").textContent="로그인 서버가 아직 이 정적 배포에 연결되지 않았습니다. 먼저 계정 백엔드를 연결해야 합니다.";};$("#signupBtn").onclick=()=>{$("#authStatus").textContent="회원가입 서버가 아직 연결되지 않았습니다.";};$("#settings").onclick=()=>$("#panel").classList.toggle("hidden");$("#close").onclick=()=>$("#panel").classList.add("hidden");$("#apiDocs").onclick=()=>location.href="/api-docs";
 ["personality","instructions","web"].forEach(id=>$("#"+id).addEventListener("input",saveSettings));$("#temp").addEventListener("input",()=>{$("#tempValue").textContent=Number($("#temp").value).toFixed(2);saveSettings()});
 if(chats.length)loadChat(chats[chats.length-1].id);else{currentId=crypto.randomUUID();renderEmpty();renderHistory()}input.focus();
 </script>
