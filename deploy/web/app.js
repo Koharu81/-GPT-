@@ -75,12 +75,20 @@ function renderSources(e,sources){
 }
 function createAssistant(){
   const e=document.createElement("article");e.className="msg assistant";
-  e.innerHTML='<div class="avatar">M</div><div class="wrap"><div class="process"><span class="process-dot"></span><span class="process-label">질문 분석 중</span></div><div class="bubble"></div></div>';
+  e.innerHTML='<div class="avatar">M</div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">질문 분석 중</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
+  const process=e.querySelector(".process"),toggle=e.querySelector(".process-toggle");
+  toggle.onclick=()=>{process.classList.toggle("expanded");toggle.querySelector(".process-chevron").textContent=process.classList.contains("expanded")?"⌃":"⌄"};
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});
-  return {e:e,bubble:e.querySelector(".bubble"),process:e.querySelector(".process"),label:e.querySelector(".process-label")};
+  return {e:e,bubble:e.querySelector(".bubble"),process:process,label:e.querySelector(".process-label"),details:e.querySelector(".process-details"),logs:[]};
 }
-function stage(box,label){box.label.textContent=label;box.process.classList.remove("done")}
-function finish(box){box.label.textContent="답변 완료";box.process.classList.add("done")}
+function addProcessLog(box,label){
+  const now=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  if(box.logs[box.logs.length-1]?.label===label)return;
+  box.logs.push({label:label,time:now});
+  box.details.innerHTML=box.logs.map(x=>`<div class="process-log"><span>${escapeHtml(x.label)}</span><time>${x.time}</time></div>`).join("");
+}
+function stage(box,label){box.label.textContent=label;box.process.classList.remove("done");addProcessLog(box,label)}
+function finish(box){box.label.textContent="답변 완료";box.process.classList.add("done");addProcessLog(box,"답변 완료")}
 function restoreServer(rows){
   const grouped=[],by={};
   for(const x of rows){
@@ -117,13 +125,13 @@ function parseSSEBlock(block,box,state){
   block.split("\n").forEach(line=>{if(line.startsWith("event:"))ev=line.slice(6).trim();if(line.startsWith("data:"))data+=line.slice(5).trim()});
   if(!data)return;let obj;try{obj=JSON.parse(data)}catch{return}
   if(ev==="stage")stage(box,obj.label||"처리 중");
-  else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length)renderSources(box.e,state.sources)}
+  else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"웹 검색 완료 · "+state.sources.length+"개 결과");renderSources(box.e,state.sources)}}
   else if(ev==="delta"){box.bubble.textContent+=obj.text||"";box.e.scrollIntoView({behavior:"smooth",block:"end"})}
   else if(ev==="done"){state.done=true;finish(box)}
   else if(ev==="error")throw Error(obj.message||"생성 중 오류가 발생했습니다.");
 }
 async function streamAsk(text,box){
-  const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:700};
+  const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600};
   const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(!r.ok)throw Error("스트리밍 요청에 실패했습니다.");
   const type=r.headers.get("content-type")||"";
@@ -228,8 +236,12 @@ function escapeHtml(v){return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":
 $("#skillForm").onsubmit=async e=>{
   e.preventDefault();
   try{
-    await req("/skills",{method:"POST",body:JSON.stringify({name:$("#skillName").value,description:$("#skillDescription").value,url:$("#skillUrl").value,method:$("#skillMethod").value,headers:$("#skillHeaders").value,body:$("#skillBody").value})});
-    e.target.reset();$("#skillMethod").value="POST";loadSkills();
+    const names=$("#skillParams").value.split(",").map(x=>x.trim()).filter(Boolean);
+    let body=$("#skillBody").value.trim();
+    const method=$("#skillMethod").value;
+    if(!body&&names.length&&["POST","PUT","PATCH"].includes(method))body=JSON.stringify(Object.fromEntries(names.map(n=>[n,"{{"+n+"}}"])),null,2);
+    await req("/skills",{method:"POST",body:JSON.stringify({name:$("#skillName").value,description:$("#skillDescription").value,url:$("#skillUrl").value,method:method,headers:$("#skillHeaders").value,body:body})});
+    e.target.reset();$("#skillMethod").value="GET";$("#globalStatus").textContent="스킬이 등록되었습니다. 채팅에서 /skill 이름 {…}으로 실행할 수 있습니다.";loadSkills();
   }catch(err){alert(err.message)}
 };
 $("#form").onsubmit=e=>{e.preventDefault();ask($("#input").value)};

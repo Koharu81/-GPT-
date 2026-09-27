@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mirae AI</title><link rel="stylesheet" href="/app.css">
+<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=7">
 </head>
 <body>
 <div class="app">
@@ -104,13 +104,16 @@
       </div>
 
       <div class="page hidden" id="page-skills">
-        <div class="section-note"><b>스킬</b><span>API 요청을 저장해 두고 직접 실행할 수 있습니다.</span><code>/skill 스킬이름 {"key":"값"}</code></div>
+        <div class="section-note"><b>스킬</b><span>API 주소와 입력값 이름만 넣어도 기본 설정이 자동으로 만들어집니다. GET은 입력값을 쿼리로, POST·PUT·PATCH는 JSON 본문으로 전달합니다.</span><code>/skill 스킬이름 {"key":"값"}</code></div>
         <form id="skillForm">
-          <div class="grid2"><div class="field"><label>이름</label><input id="skillName" maxlength="60" placeholder="예: weather"></div><div class="field"><label>요청 방식</label><select id="skillMethod"><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div></div>
-          <div class="field"><label>설명</label><input id="skillDescription" maxlength="500" placeholder="이 스킬이 무엇을 하는지"></div>
-          <div class="field"><label>URL</label><input id="skillUrl" placeholder="https://api.example.com/weather"></div>
-          <div class="field"><label>Headers JSON</label><textarea id="skillHeaders" rows="4" placeholder='{"Authorization":"Bearer {{token}}"}'></textarea></div>
-          <div class="field"><label>Body JSON</label><textarea id="skillBody" rows="5" placeholder='{"city":"{{city}}"}'></textarea></div>
+          <div class="grid2"><div class="field"><label>스킬 이름</label><input id="skillName" maxlength="60" placeholder="예: weather"></div><div class="field"><label>요청 방식</label><select id="skillMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div></div>
+          <div class="field"><label>무엇을 하는 스킬인가요?</label><input id="skillDescription" maxlength="500" placeholder="예: 날씨 API에서 지역별 현재 날씨 가져오기"></div>
+          <div class="field"><label>API 주소</label><input id="skillUrl" placeholder="https://api.example.com/weather"></div>
+          <div class="field"><label>입력값 이름</label><input id="skillParams" placeholder="예: city, lang  ·  GET은 쿼리 / POST는 JSON으로 전달"></div>
+          <details class="advanced"><summary>고급 설정 · 인증 헤더 / JSON 본문</summary>
+            <div class="field"><label>Headers JSON</label><textarea id="skillHeaders" rows="4" placeholder='{"Authorization":"Bearer {{token}}"}'></textarea></div>
+            <div class="field"><label>Body JSON</label><textarea id="skillBody" rows="5" placeholder='{"city":"{{city}}"}'></textarea></div>
+          </details>
           <button class="primary small" type="submit">스킬 등록</button>
         </form>
         <div class="skill-list" id="skillList"></div>
@@ -119,6 +122,6 @@
   </div>
 </div>
 
-<script src="/app.js" defer></script>
+<script src="/app.js?v=7" defer></script>
 </body>
 </html>

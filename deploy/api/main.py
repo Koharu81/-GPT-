@@ -57,7 +57,7 @@ class ChatMessage(BaseModel): role:str; content:str
 class ChatRequest(BaseModel):
     message:str=Field(min_length=1,max_length=12000); history:list[ChatMessage]=Field(default_factory=list)
     personality:str="balanced"; instructions:str=""; web_search:bool=True
-    temperature:float=Field(.7,ge=.2,le=1.2); max_tokens:int=Field(700,ge=64,le=1600)
+    temperature:float=Field(.7,ge=.2,le=1.2); max_tokens:int=Field(2200,ge=64,le=3200)
 class Settings(BaseModel):
     theme:str="light"; personality:str="balanced"; instructions:str=""; web_search:bool=True
     temperature:float=Field(.7,ge=.2,le=1.2)
@@ -82,8 +82,9 @@ def wants_web(t:str)->bool:
     return bool(WEB_FRESH.search(t) and WEB_CONTEXT.search(t))
 
 def clean_query(t:str)->str:
-    t=re.sub(r"(검색해줘|검색해|찾아줘|찾아봐|찾아서|알려줘|알려 줘|정리해줘|정리해 줘)"," ",t,flags=re.I)
-    return re.sub(r"\s+"," ",t).strip()[:180]
+    t=re.sub(r"(검색해줘|검색해|찾아줘|찾아봐|찾아서|알려줘|알려 줘|정리해줘|정리해 줘|알려|찾아|검색|조회해줘|조회해|확인해줘|확인해|최신|현재|지금|최근|실시간|오늘|어제|내일|이번\s*(?:주|달)|소식|뉴스|정보)"," ",t,flags=re.I)
+    q=re.sub(r"\s+"," ",t).strip()
+    return q[:180] or "주요 뉴스"
 
 def relevance(q:str,x:dict)->float:
     hay=(x["title"]+" "+x["snippet"]).lower()
@@ -114,7 +115,8 @@ def system_prompt(req,language,sources,skills):
         src="\n웹 검색 결과:\n"+"\n".join(f"- {x['title']} | {x['published']} | {x['url']} | {x['snippet']}" for x in sources)
     sk="\n사용 가능한 스킬: "+", ".join(f"/skill {x['name']} {{...}}" for x in skills) if skills else ""
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-27. {rule}
-Do not reveal private chain-of-thought or hidden reasoning. Progress shown in the UI is only a high-level status.
+Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels.
+When web results are supplied, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so.
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
 User instructions: {req.instructions[:4000] or 'none'}.{src}{sk}"""
 
@@ -472,7 +474,7 @@ async def openai_chat(req:dict[str,Any],request:Request,authorization:str|None=H
         if wants_web(last):sources=await search_web(last)
     except Exception:pass
     prompt=[{"role":"system","content":system_prompt(ChatRequest(message=last),lang(last),sources,[])}]+[m for m in msgs if m.get("role") in ("system","user","assistant")]
-    reply=await generate_once(prompt,float(req.get("temperature",.7)),min(int(req.get("max_tokens",700)),1600))
+    reply=await generate_once(prompt,float(req.get("temperature",.7)),min(int(req.get("max_tokens",2200)),3200))
     with db() as c:c.execute("UPDATE mirae_api_keys SET last_used_at=now() WHERE id=%s",[k["id"]]);c.commit()
     return {"id":"mirae-chat","object":"chat.completion","created":int(time.time()),"model":req.get("model","mirae-free"),"choices":[{"index":0,"message":{"role":"assistant","content":reply},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"sources":sources}
 
