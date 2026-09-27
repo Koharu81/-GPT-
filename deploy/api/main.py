@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, HttpUrl
 import psycopg
 from psycopg.rows import dict_row
 
-APP_VERSION="5.0.0"
+APP_VERSION="5.1.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
