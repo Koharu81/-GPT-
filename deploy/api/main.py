@@ -108,8 +108,8 @@ async def search_web(t:str):
         desc=re.sub(r"<[^>]+>"," ",i.findtext("description") or "")
         out.append({"title":title,"url":link,"published":pub,"snippet":" ".join(desc.split())[:500]})
     out.sort(key=lambda x:relevance(q,x),reverse=True)
-    scored=[x for x in out if relevance(q,x)>0]
-    return (scored or out[:5])[:5]
+    scored=[x for x in out if relevance(q,x)>=1]
+    return scored[:3]
 
 def system_prompt(req,language,sources,skills):
     rule={"ko":"한국어로 자연스럽게 답하세요. 사용자가 요청하지 않는 한 다른 언어를 섞지 마세요.","ja":"自然な日本語で答えてください。","en":"Answer in natural English unless the user requests another language."}[language]
@@ -119,7 +119,7 @@ def system_prompt(req,language,sources,skills):
     sk="\n사용 가능한 스킬: "+", ".join(f"/skill {x['name']} {{...}}" for x in skills) if skills else ""
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-27. {rule}
 Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels.
-When web results are supplied, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so.
+When web results are supplied, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
 User instructions: {req.instructions[:4000] or 'none'}.{src}{sk}"""
 

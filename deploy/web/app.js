@@ -60,10 +60,31 @@ function renderEmpty(){
   '<button class="card" data-q="자연스러운 한국어 글을 작성해줘"><b>글쓰기</b><span>문장과 콘텐츠를 함께 작성</span></button></div></section>';
   document.querySelectorAll("[data-q]").forEach(x=>x.onclick=()=>ask(x.dataset.q));
 }
+function normalizeMarkdown(text){
+  return String(text||"").split(/(```[\\s\\S]*?```)/g).map((part,i)=>i%2?part:part.replace(/\\([*_#~\[\]])/g,"$1")).join("");
+}
+function renderMarkdown(text){
+  if(!window.marked||!window.DOMPurify)return escapeHtml(text).replace(/\\n/g,"<br>");
+  marked.setOptions({gfm:true,breaks:true});
+  const raw=marked.parse(normalizeMarkdown(text));
+  const safe=DOMPurify.sanitize(raw,{USE_PROFILES:{html:true}});
+  const box=document.createElement("div");box.innerHTML=safe;
+  box.querySelectorAll("a").forEach(a=>{a.target="_blank";a.rel="noopener noreferrer nofollow"});
+  box.querySelectorAll("pre code").forEach(code=>{try{if(window.hljs)hljs.highlightElement(code)}catch{};addCodeCopy(code.parentElement)});
+  return box.innerHTML;
+}
+function addCodeCopy(pre){
+  if(pre.querySelector(".code-copy"))return;
+  pre.classList.add("code-block");
+  const button=document.createElement("button");button.className="code-copy";button.type="button";button.textContent="복사";
+  button.onclick=async()=>{try{await navigator.clipboard.writeText(pre.querySelector("code")?.textContent||"");button.textContent="복사됨";setTimeout(()=>button.textContent="복사",1200)}catch{button.textContent="복사 실패"}};
+  pre.appendChild(button);
+}
+function renderBubble(el,text){el.innerHTML=renderMarkdown(text);}
 function add(role,text,sources=[]){
   const e=document.createElement("article");e.className="msg "+role;
   e.innerHTML='<div class="avatar">'+(role==="user"?"나":"M")+'</div><div class="wrap"><div class="bubble"></div></div>';
-  e.querySelector(".bubble").textContent=text;
+  if(role==="assistant")renderBubble(e.querySelector(".bubble"),text);else e.querySelector(".bubble").textContent=text;
   if(role==="assistant"&&sources.length)renderSources(e,sources);
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});return e;
 }
@@ -71,7 +92,7 @@ function renderSources(e,sources){
   let box=e.querySelector(".sources");
   if(!box){box=document.createElement("div");box.className="sources";e.querySelector(".wrap").appendChild(box)}
   box.innerHTML="";
-  sources.forEach(s=>{const a=document.createElement("a");a.href=s.url;a.target="_blank";a.rel="noopener noreferrer";a.textContent=s.title;box.appendChild(a)});
+  sources.forEach((s,i)=>{const a=document.createElement("a");a.href=s.url;a.target="_blank";a.rel="noopener noreferrer nofollow";a.className="source-card";const host=(()=>{try{return new URL(s.url).hostname.replace(/^www\./,"")}catch{return "source"}})();a.innerHTML="<span class=\"source-index\">"+(i+1)+"</span><span class=\"source-copy\"><b>"+escapeHtml(s.title)+"</b><small>"+escapeHtml(host)+(s.published?" · "+escapeHtml(s.published):"")+"</small></span><span class=\"source-arrow\">↗</span>";box.appendChild(a)});
 }
 function createAssistant(){
   const e=document.createElement("article");e.className="msg assistant";
@@ -127,7 +148,7 @@ function parseSSEBlock(block,box,state){
   if(ev==="stage")stage(box,obj.label||"처리 중");
   else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"웹 검색 완료 · "+state.sources.length+"개 결과");renderSources(box.e,state.sources)}}
   else if(ev==="delta"){box.bubble.textContent+=obj.text||"";box.e.scrollIntoView({behavior:"smooth",block:"end"})}
-  else if(ev==="done"){state.done=true;finish(box)}
+  else if(ev==="done"){state.done=true;renderBubble(box.bubble,box.bubble.textContent);finish(box)}
   else if(ev==="error")throw Error(obj.message||"생성 중 오류가 발생했습니다.");
 }
 async function streamAsk(text,box){
