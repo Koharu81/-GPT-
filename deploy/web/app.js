@@ -20,7 +20,8 @@ function conversationTitle(text){
   let s=String(text||"").replace(/```[\\s\\S]*?```/g," ");
   s=s.replace(/^#\\s*/gm,"");
   s=s.replace(/\\s+/g," ").trim();
-  return (s.slice(0,54)+(s.length>54?"…":""))||"새 대화";
+  s=s.replace(/(?:해줘|해주세요|해 주세요|알려줘|알려주세요|설명해줘|설명해주세요)[.!?]*$/,"").trim();
+  return (s.slice(0,28).trim()+(s.length>28?"…":""))||"새 대화";
 }
 
 async function req(path,opt={}){
@@ -237,14 +238,23 @@ function finish(box){
   if(!box.e.querySelector(".message-actions"))addMessageActions(box.e,simpleHash(box.raw||box.bubble.textContent),box.raw||box.bubble.textContent);
 }
 function restoreServer(rows,convs=[]){
-  const grouped=[],by={},titles=Object.fromEntries(convs.map(x=>[x.id,x.title]));
-  for(const x of rows){
-    const id=x.conversation_id||("legacy-"+x.id);
-    if(!by[id])by[id]={id:id,title:x.conversation_title||titles[id]||"새 대화",messages:[]};
-    by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
-    if(by[id].title==="새 대화"&&x.role==="user")by[id].title=conversationTitle(x.content);
+  const by={};
+  const meta=Object.fromEntries(convs.map(x=>[x.id,x]));
+  for(const c of convs){
+    by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),messages:[]};
   }
-  chats=Object.values(by).slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));
+  for(const x of rows){
+    const id=String(x.conversation_id||"").trim();
+    if(!id)continue;
+    if(!by[id])by[id]={id:id,title:conversationTitle(x.conversation_title||"새 대화"),messages:[]};
+    by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
+  }
+  chats=Object.values(by).sort((a,b)=>{
+    const ta=meta[a.id]?.updated_at||"";
+    const tb=meta[b.id]?.updated_at||"";
+    return new Date(ta)-new Date(tb);
+  }).slice(-100);
+  localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
   const h=$("#history");h.innerHTML="";
@@ -302,7 +312,7 @@ function parseSSEBlock(block,box,state){
   if(!data)return;let obj;try{obj=JSON.parse(data)}catch{return}
   if(ev==="stage")stage(box,obj.label||"처리 중");
   else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"웹 검색 완료 · "+state.sources.length+"개 결과");renderSources(box.e,state.sources)}}
-  else if(ev==="conversation"){state.conversation_id=obj.id||"";state.title=obj.title||"새 대화";currentTitle=state.title;const c=chats.find(x=>x.id===state.conversation_id);if(c)c.title=state.title;$("#title").textContent=state.title}
+  else if(ev==="conversation"){state.conversation_id=obj.id||"";state.title=conversationTitle(obj.title||"새 대화");currentTitle=state.title;const c=chats.find(x=>x.id===state.conversation_id);if(c)c.title=state.title;$("#title").textContent=state.title}
   else if(ev==="delta"){box.raw=(box.raw||"")+(obj.text||"");box.bubble.textContent=box.raw;box.e.scrollIntoView({behavior:"smooth",block:"end"})}
   else if(ev==="done"){state.done=true;if(obj.conversation_id)state.conversation_id=obj.conversation_id;renderBubble(box.bubble,box.raw||"");finish(box)}
   else if(ev==="error")throw Error(obj.message||"생성 중 오류가 발생했습니다.");
