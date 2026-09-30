@@ -45,12 +45,11 @@ function fillSettings(){
   applyTheme();
 }
 async function boot(){
-  try{
-    const m=await req("/auth/me");user=m.user;
-    await Promise.all([loadSettings(),loadProfile(),loadHistory()]);
-    setAccountLabel();
-  }catch{}
   fillSettings();renderHistory();newChat(false);
+  try{
+    const m=await req("/auth/me");user=m.user;setAccountLabel();
+    Promise.all([loadSettings(),loadProfile(),loadHistory()]).then(()=>{fillSettings();setAccountLabel();renderHistory()});
+  }catch{}
 }
 async function loadSettings(){if(settingsLoaded)return;try{settings=await req("/settings");settingsLoaded=true}catch{}}
 async function loadProfile(){if(user&& !profileLoaded)try{applyProfile(await req("/profile"));profileLoaded=true}catch{}}
@@ -397,6 +396,7 @@ if($("#instructions"))$("#instructions").oninput=queueSettingsSave;
 async function openSettings(page="general"){
   if(!user){openAuth("login");return}
   await Promise.all([loadSettings(),loadProfile()]);fillSettings();setAccountLabel();$("#settingsOverlay").classList.remove("hidden");selectPage(page);
+  if(page==="developer")loadApiKeys();
 }
 function selectPage(page){
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
@@ -479,6 +479,13 @@ async function createApiKey(){
     const d=await req("/api-keys",{method:"POST",body:JSON.stringify({name})});
     $("#apiKeyName").value="";$("#apiKeyReveal").textContent=d.key||"";$("#apiKeyRevealWrap").classList.remove("hidden");loadApiKeys();
   }catch(e){alert(e.message)}finally{btn.disabled=false}
+}
+function createApiKey(){
+  const name=$("#apiKeyName").value.trim();if(!name)return;
+  const btn=$("#createApiKey");btn.disabled=true;
+  req("/api-keys",{method:"POST",body:JSON.stringify({name})}).then(d=>{
+    $("#apiKeyName").value="";$("#apiKeyReveal").textContent=d.key||"";$("#apiKeyRevealWrap").classList.remove("hidden");loadApiKeys();
+  }).catch(e=>alert(e.message)).finally(()=>btn.disabled=false);
 }
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("#skillForm").onsubmit=async e=>{
