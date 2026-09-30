@@ -678,6 +678,11 @@ async def chat_stream(req:ChatRequest,request:Request):
                 if chunks:raise
                 reply=await generate_once(msgs,req.temperature,req.max_tokens);chunks=[reply];yield event("delta",{"text":reply})
             reply="".join(chunks).strip()
+            if not reply:
+                reply=await generate_once(msgs,req.temperature,req.max_tokens)
+                if reply:yield event("delta",{"text":reply})
+            if not reply:
+                raise RuntimeError("모델이 답변을 반환하지 않았습니다.")
             cid=""
             if u:
                 cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
