@@ -170,7 +170,7 @@ def save_chat(uid,msg,reply,mode,sources,cid="",attachments=None):
     cid=ensure_conversation(uid,cid)
     att=json.dumps(attachments or [],ensure_ascii=False)
     with db() as c:
-        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id,attachments) VALUES (%s,'user',%s,%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s,%s)",[uid,msg,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,att,uid,reply,mode,HF_MODEL,json.dumps(sources,ensure_ascii=False),cid,"[]"])
+        c.execute("INSERT INTO mirae_chat_history(user_id,role,content,mode,model,sources,conversation_id,attachments) VALUES (%s,'user',%s,%s,%s,%s,%s,%s),(%s,'assistant',%s,%s,%s,%s,%s,%s)",[uid,msg,mode,MODEL_NAME,json.dumps(sources,ensure_ascii=False),cid,att,uid,reply,mode,MODEL_NAME,json.dumps(sources,ensure_ascii=False),cid,"[]"])
         c.execute("UPDATE mirae_conversations SET updated_at=now() WHERE id=%s AND user_id=%s",[cid,uid])
         c.commit()
     return cid
@@ -713,4 +713,4 @@ async def models(authorization:str|None=Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):raise HTTPException(401,"API key required.")
     with db() as c:k=c.execute("SELECT id FROM mirae_api_keys WHERE key_hash=%s AND state='active'",[digest(authorization[7:])]).fetchone()
     if not k:raise HTTPException(401,"Invalid API key.")
-    return {"object":"list","data":[{"id":HF_MODEL,"object":"model","owned_by":"mirae"}]}
+    return {"object":"list","data":[{"id":MODEL_NAME,"object":"model","owned_by":"mirae"}]}
