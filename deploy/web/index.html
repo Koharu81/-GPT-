@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=14">
+<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=15">
 </head>
 <body>
 <div class="app">
@@ -106,8 +106,16 @@
       </div>
 
       <div class="page hidden" id="page-developer">
-        <div class="setting-row"><div><b>API 키</b><small>계정별 OpenAI 호환 API 키를 발급하고 폐기합니다.</small></div><button class="outline" id="openKeys">관리</button></div>
-        <div class="setting-row"><div><b>API 문서</b><small>엔드포인트와 호출 형식을 확인합니다.</small></div><button class="outline" id="openDocs">열기</button></div>
+        <div class="section-note"><b>API</b><span>계정별 API 키를 관리하고 OpenAPI 문서를 확인할 수 있습니다.</span></div>
+        <div class="api-key-create">
+          <div class="field"><label>새 API 키 이름</label><input id="apiKeyName" maxlength="80" placeholder="예: 내 프로그램"></div>
+          <button class="primary small" id="createApiKey" type="button">API 키 발급</button>
+        </div>
+        <div class="hidden api-key-reveal-wrap" id="apiKeyRevealWrap">
+          <div class="api-key-reveal"><b>새 API 키</b><code id="apiKeyReveal"></code><small>이 키는 지금 한 번만 전체 값이 표시됩니다. 안전한 곳에 저장하세요.</small></div>
+        </div>
+        <div class="setting-row"><div><b>API 문서</b><small>OpenAPI/Swagger 문서에서 엔드포인트와 요청 형식을 확인합니다.</small></div><button class="outline" id="openDocs">열기</button></div>
+        <div class="api-key-list" id="apiKeyList"></div>
       </div>
 
       <div class="page hidden" id="page-memory">
@@ -140,6 +148,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=14" defer></script>
+<script src="/app.js?v=15" defer></script>
 </body>
 </html>
