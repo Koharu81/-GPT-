@@ -34,10 +34,10 @@ RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
 RESEND_URL="https://api.resend.com/emails"
 SESSION_DAYS=30
 
-WEB_EXPLICIT=re.compile(r"(??s*검???�터???:?�서)?|검???:???�줘|?�봐|?�서|?�고|결과)?|찾아(?:�?�??????�려)|공식\s*(?:?�이???�료|문서|?�이지)|링크\s*(?:�??�려)|?�료\s*(?:�?검??)",re.I)
-WEB_FRESH=re.compile(r"(최신|?�재|지�?최근|?�시�??�늘|?�제|?�일|?�번\s*(?:�???|?�데?�트|?�보|?�로\s*?�온)",re.I)
-WEB_CONTEXT=re.compile(r"(?�스|?�식|?�보|?�씨|가�??�율|주�?|?�세|?�정|출시|버전|?�치|?�데?�트|?�건|공�?|공식|?�위|경기|결과|?�태|?�업|?�영?�간)",re.I)
-GREETING_ONLY=re.compile(r"^\s*(?�녕(?:?�세???|?�이|?�ㅇ|hello|hi|hey|반�???좋�?\s*(?:?�침|?�??|??s*지??\s*[!?.~]*\s*$",re.I)
+WEB_EXPLICIT=re.compile(r"(??s*ê²€???¸í„°???:?ì„œ)?|ê²€???:???´ì¤˜|?´ë´|?´ì„œ|?˜ê³ |ê²°ê³¼)?|ì°¾ì•„(?:ì¤?ë´??????Œë ¤)|ê³µì‹\s*(?:?¬ì´???ë£Œ|ë¬¸ì„œ|?˜ì´ì§€)|ë§í¬\s*(?:ì°??Œë ¤)|?ë£Œ\s*(?:ì°?ê²€??)",re.I)
+WEB_FRESH=re.compile(r"(ìµœì‹ |?„ìž¬|ì§€ê¸?ìµœê·¼|?¤ì‹œê°??¤ëŠ˜|?´ì œ|?´ì¼|?´ë²ˆ\s*(?:ì£???|?…ë°?´íŠ¸|?ë³´|?ˆë¡œ\s*?˜ì˜¨)",re.I)
+WEB_CONTEXT=re.compile(r"(?´ìŠ¤|?Œì‹|?•ë³´|? ì”¨|ê°€ê²??˜ìœ¨|ì£¼ê?|?œì„¸|?¼ì •|ì¶œì‹œ|ë²„ì „|?¨ì¹˜|?…ë°?´íŠ¸|?¬ê±´|ê³µì?|ê³µì‹|?œìœ„|ê²½ê¸°|ê²°ê³¼|?íƒœ|?ì—…|?´ì˜?œê°„)",re.I)
+GREETING_ONLY=re.compile(r"^\s*(?ˆë…•(?:?˜ì„¸???|?˜ì´|?Žã…‡|hello|hi|hey|ë°˜ê???ì¢‹ì?\s*(?:?„ì¹¨|?€??|??s*ì§€??\s*[!?.~]*\s*$",re.I)
 
 def db():
     if not DATABASE_URL: raise HTTPException(503,"DATABASE_URL is not configured.")
@@ -91,22 +91,25 @@ class MemoryCreate(BaseModel): content:str=Field(min_length=1,max_length=1000)
 class SkillPromptCreate(BaseModel): prompt:str=Field(min_length=10,max_length=4000)
 
 def lang(t:str):
-    ko=len(re.findall(r"[가-??",t));ja=len(re.findall(r"[???�ァ-??",t))
+    ko=len(re.findall(r"[ê°€-??",t));ja=len(re.findall(r"[???–ã‚¡-??",t))
     if ko>=2:return "ko"
     if ja>=2 and ko==0:return "ja"
     return "en"
 
 def wants_web(t:str)->bool:
-    return bool(t.strip())
+    text=str(t or "").strip()
+    if not text:return False
+    keywords="검색 찾아 조사 조회 확인해 알아봐 링크 출처 공식 문서 공식 사이트 자료 뉴스 기사 최신 현재 지금 오늘 어제 이번 주 최근 가격 요금 출시 업데이트 버전 스펙 일정 영업시간 주소 위치 주가 환율 날씨 사건 결과 경기 순위 통계"
+    return any(k in text for k in keywords.split())
 
 def clean_query(t:str)->str:
-    t=re.sub(r"(검?�해�?검?�해|찾아�?찾아�?찾아???�려�??�려 �??�리?�줘|?�리??�??�려|찾아|검??조회?�줘|조회???�인?�줘|?�인??최신|?�재|지�?최근|?�시�??�늘|?�제|?�일|?�번\s*(?:�???|?�식|?�스|?�보)"," ",t,flags=re.I)
+    t=re.sub(r"(ê²€?‰í•´ì¤?ê²€?‰í•´|ì°¾ì•„ì¤?ì°¾ì•„ë´?ì°¾ì•„???Œë ¤ì¤??Œë ¤ ì¤??•ë¦¬?´ì¤˜|?•ë¦¬??ì¤??Œë ¤|ì°¾ì•„|ê²€??ì¡°íšŒ?´ì¤˜|ì¡°íšŒ???•ì¸?´ì¤˜|?•ì¸??ìµœì‹ |?„ìž¬|ì§€ê¸?ìµœê·¼|?¤ì‹œê°??¤ëŠ˜|?´ì œ|?´ì¼|?´ë²ˆ\s*(?:ì£???|?Œì‹|?´ìŠ¤|?•ë³´)"," ",t,flags=re.I)
     q=re.sub(r"\s+"," ",t).strip()
-    return q[:180] or "주요 ?�스"
+    return q[:180] or "ì£¼ìš” ?´ìŠ¤"
 
 def relevance(q:str,x:dict)->float:
     hay=(x["title"]+" "+x["snippet"]).lower()
-    toks=re.findall(r"[가-??{2,}|[a-z0-9][a-z0-9._+-]*",q.lower())
+    toks=re.findall(r"[ê°€-??{2,}|[a-z0-9][a-z0-9._+-]*",q.lower())
     score=sum((2 if len(k)>=3 else 1) for k in toks if k in hay)
     return score
 
@@ -131,18 +134,18 @@ async def search_web(t:str):
     return scored[:5]
 
 def system_prompt(req,language,sources,skills,memories=None,profile_data=None,attachments=None):
-    rule={"ko":"?�국?�로 ?�연?�럽�??�하?�요. ?�용?��? ?�청?��? ?�는 ???�른 ?�어�??��? 마세??","ja":"?�然?�日?�語?�答?�て?�だ?�い??,"en":"Answer in natural English unless the user requests another language."}[language]
+    rule={"ko":"?œêµ­?´ë¡œ ?ì—°?¤ëŸ½ê²??µí•˜?¸ìš”. ?¬ìš©?ê? ?”ì²­?˜ì? ?ŠëŠ” ???¤ë¥¸ ?¸ì–´ë¥??žì? ë§ˆì„¸??","ja":"?ªç„¶?ªæ—¥?¬èªž?§ç­”?ˆã¦?ã ?•ã„??,"en":"Answer in natural English unless the user requests another language."}[language]
     src=""
     if sources:
-        src="\n??검??결과:\n"+"\n".join(f"- {x['title']} | {x['published']} | {x['url']} | {x['snippet']}" for x in sources)
-    sk="\n?�용 가?�한 ?�킬: "+", ".join(f"/skill {x['name']} {{...}}" for x in skills) if skills else ""
+        src="\n??ê²€??ê²°ê³¼:\n"+"\n".join(f"- {x['title']} | {x['published']} | {x['url']} | {x['snippet']}" for x in sources)
+    sk="\n?¬ìš© ê°€?¥í•œ ?¤í‚¬: "+", ".join(f"/skill {x['name']} {{...}}" for x in skills) if skills else ""
     mm=memories or []
-    mem="\n기억???�용???�보(?�?�에 ?��??????�만 ?�용):\n"+"\n".join(f"- {m['content']}" for m in mm) if mm else ""
+    mem="\nê¸°ì–µ???¬ìš©???•ë³´(?€?”ì— ?„ì??????Œë§Œ ?¬ìš©):\n"+"\n".join(f"- {m['content']}" for m in mm) if mm else ""
     p=profile_data or {}
-    profile_text="\n?�용???�로??개인?�에 ?��??????�만 ?�용):\n- ?�름: "+str(p.get("name",""))+"\n- ?�기?�개: "+str(p.get("bio",""))+"\n- ?�일: "+str(p.get("birth_date",""))
+    profile_text="\n?¬ìš©???„ë¡œ??ê°œì¸?”ì— ?„ì??????Œë§Œ ?¬ìš©):\n- ?´ë¦„: "+str(p.get("name",""))+"\n- ?ê¸°?Œê°œ: "+str(p.get("bio",""))+"\n- ?ì¼: "+str(p.get("birth_date",""))
     att=attachments or []
-    attachment_text="\n첨�??�일:\n"+"\n".join(f"- {a['name']} ({a['type'] or 'unknown'}, {a['size']} bytes)"+("\n  추출???�스??\n"+a['text'][:16000] if a.get('text') else "\n  ???�일?� ?�스?��? 추출?��? ?�았?�니??") for a in att) if att else ""
-    chart_rule="\n차트 규칙: ?�용?��? ?�자 ?�이?��? 차트/그래?�로 보여?�라�??�거???�절???�각?��? 명시?�으�??�하�? 짧�? ?�명 ?�에 반드??```mirae-chart ?�태??JSON 블록???�나 출력?�세?? ?�식?� {\"type\":\"bar|line|doughnut\",\"title\":\"?�목\",\"labels\":[\"A\",\"B\"],\"datasets\":[{\"label\":\"�?",\"data\":[10,20]}]} ?�니?? ?�이?��? ?�러 계열?�면 datasets�??�러 �??�용?�세?? ?�자가 ?�닌 ?�용?� 차트�??��?�?만들지 마세??"
+    attachment_text="\nì²¨ë??Œì¼:\n"+"\n".join(f"- {a['name']} ({a['type'] or 'unknown'}, {a['size']} bytes)"+("\n  ì¶”ì¶œ???ìŠ¤??\n"+a['text'][:16000] if a.get('text') else "\n  ???Œì¼?€ ?ìŠ¤?¸ë? ì¶”ì¶œ?˜ì? ?Šì•˜?µë‹ˆ??") for a in att) if att else ""
+    chart_rule="\nì°¨íŠ¸ ê·œì¹™: ?¬ìš©?ê? ?«ìž ?°ì´?°ë? ì°¨íŠ¸/ê·¸ëž˜?„ë¡œ ë³´ì—¬?¬ë¼ê³??˜ê±°???ì ˆ???œê°?”ë? ëª…ì‹œ?ìœ¼ë¡??í•˜ë©? ì§§ì? ?¤ëª… ?¤ì— ë°˜ë“œ??```mirae-chart ?•íƒœ??JSON ë¸”ë¡???˜ë‚˜ ì¶œë ¥?˜ì„¸?? ?•ì‹?€ {\"type\":\"bar|line|doughnut\",\"title\":\"?œëª©\",\"labels\":[\"A\",\"B\"],\"datasets\":[{\"label\":\"ê°?",\"data\":[10,20]}]} ?…ë‹ˆ?? ?°ì´?°ê? ?¬ëŸ¬ ê³„ì—´?´ë©´ datasetsë¥??¬ëŸ¬ ê°??¬ìš©?˜ì„¸?? ?«ìžê°€ ?„ë‹Œ ?´ìš©?€ ì°¨íŠ¸ë¡??µì?ë¡?ë§Œë“¤ì§€ ë§ˆì„¸??"
     self_info = (
     "Mirae AI service facts: "
     "public web app domain https://mirae.koharu.live; "
@@ -165,7 +168,7 @@ Web search is always performed for normal chat requests. Search results may be i
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
 Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{attachment_text}{chart_rule}{src}{sk}"""
 
-def ensure_conversation(uid,cid,title="???�??):
+def ensure_conversation(uid,cid,title="???€??):
     if not cid:cid=secrets.token_hex(16)
     with db() as c:
         c.execute("INSERT INTO mirae_conversations(id,user_id,title) VALUES (%s,%s,%s) ON CONFLICT(id) DO NOTHING",[cid,uid,title])
@@ -176,7 +179,7 @@ def make_conversation_title(message):
     text=re.sub(r"\s+"," ",str(message or "")).strip()
     text=re.sub(r"^#+\s*","",text)
     text=re.sub(r"^\s*[>*`-]+\s*","",text)
-    return text[:60].rstrip() or "???�??
+    return text[:60].rstrip() or "???€??
 
 async def generate_title(message):
     return make_conversation_title(message)
@@ -194,13 +197,13 @@ def current_title_missing(uid,cid):
     if not cid:return False
     with db() as c:
         row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s AND user_id=%s",[cid,uid]).fetchone()
-    return bool(row and row["title"]=="???�??)
+    return bool(row and row["title"]=="???€??)
 
 async def finalize_conversation(uid,cid,first_message):
     if not cid:return
     with db() as c:
         row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s AND user_id=%s",[cid,uid]).fetchone()
-    if row and row["title"]=="???�??:
+    if row and row["title"]=="???€??:
         title=await generate_title(first_message)
         with db() as c:
             c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",[title,cid,uid]);c.commit()
@@ -232,7 +235,7 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_conversations(
             id TEXT PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
-            title TEXT NOT NULL DEFAULT '???�??,
+            title TEXT NOT NULL DEFAULT '???€??,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )""")
@@ -266,9 +269,9 @@ def send_code(to,code):
     payload={
         "from":RESEND_FROM,
         "to":[to],
-        "subject":"[Mirae AI] ?�메???�증 코드",
-        "text":f"Mirae AI ?�증 코드: {code}\n\n??코드??5�???만료?�니??",
-        "html":f"<div style='font-family:Arial,sans-serif;padding:30px'><h2>Mirae AI ?�메???�증</h2><p>?�증 코드�??�력?�세??</p><div style='font-size:32px;font-weight:700;letter-spacing:8px'>{code}</div><p>??코드??<b>5�???만료</b>?�니??</p></div>",
+        "subject":"[Mirae AI] ?´ë©”???¸ì¦ ì½”ë“œ",
+        "text":f"Mirae AI ?¸ì¦ ì½”ë“œ: {code}\n\n??ì½”ë“œ??5ë¶???ë§Œë£Œ?©ë‹ˆ??",
+        "html":f"<div style='font-family:Arial,sans-serif;padding:30px'><h2>Mirae AI ?´ë©”???¸ì¦</h2><p>?¸ì¦ ì½”ë“œë¥??…ë ¥?˜ì„¸??</p><div style='font-size:32px;font-weight:700;letter-spacing:8px'>{code}</div><p>??ì½”ë“œ??<b>5ë¶???ë§Œë£Œ</b>?©ë‹ˆ??</p></div>",
         "tags":[{"name":"category","value":"confirm_email"}]
     }
     with httpx.Client(timeout=20) as x:
@@ -279,11 +282,11 @@ def send_code(to,code):
 
 async def request_signup(data):
     email=data.email.strip().lower()
-    if "@" not in email:raise HTTPException(400,"?�바�??�메?�을 ?�력?�주?�요.")
+    if "@" not in email:raise HTTPException(400,"?¬ë°”ë¥??´ë©”?¼ì„ ?…ë ¥?´ì£¼?¸ìš”.")
     with db() as c:
-        if c.execute("SELECT id FROM mirae_users WHERE email=%s",[email]).fetchone():raise HTTPException(409,"?��? 가?�된 ?�메?�입?�다.")
+        if c.execute("SELECT id FROM mirae_users WHERE email=%s",[email]).fetchone():raise HTTPException(409,"?´ë? ê°€?…ëœ ?´ë©”?¼ìž…?ˆë‹¤.")
         r=c.execute("SELECT created_at FROM mirae_email_verifications WHERE email=%s ORDER BY created_at DESC LIMIT 1",[email]).fetchone()
-        if r and r["created_at"]>datetime.now(timezone.utc)-timedelta(seconds=60):raise HTTPException(429,"?�증 코드??60초마???�시 ?�청?????�습?�다.")
+        if r and r["created_at"]>datetime.now(timezone.utc)-timedelta(seconds=60):raise HTTPException(429,"?¸ì¦ ì½”ë“œ??60ì´ˆë§ˆ???¤ì‹œ ?”ì²­?????ˆìŠµ?ˆë‹¤.")
         code=f"{secrets.randbelow(1000000):06d}"
         c.execute("DELETE FROM mirae_email_verifications WHERE email=%s",[email])
         c.execute("INSERT INTO mirae_email_verifications(email,name,password_hash,code_hash,expires_at) VALUES (%s,%s,%s,%s,%s)",[email,data.name.strip(),phash(data.password),digest(code),datetime.now(timezone.utc)+timedelta(minutes=5)]);c.commit()
@@ -292,7 +295,7 @@ async def request_signup(data):
         with db() as c:c.execute("DELETE FROM mirae_email_verifications WHERE email=%s",[email]);c.commit()
         detail=str(e).replace(RESEND_API_KEY,"[REDACTED]")[:500]
         print(f"EMAIL_SEND_ERROR provider=resend_api from={RESEND_FROM}: {detail}",flush=True)
-        raise HTTPException(503,f"?�증 메일??보내지 못했?�니?? Resend ?�류: {type(e).__name__}: {detail}")
+        raise HTTPException(503,f"?¸ì¦ ë©”ì¼??ë³´ë‚´ì§€ ëª»í–ˆ?µë‹ˆ?? Resend ?¤ë¥˜: {type(e).__name__}: {detail}")
     return {"verification_required":True,"expires_in":300}
 
 @app.get("/health")
@@ -309,13 +312,13 @@ async def signup_verify(data:Verify,response:Response):
     email=data.email.strip().lower()
     with db() as c:
         row=c.execute("SELECT * FROM mirae_email_verifications WHERE email=%s ORDER BY created_at DESC LIMIT 1",[email]).fetchone()
-        if not row:raise HTTPException(404,"?�증 ?�청??찾을 ???�습?�다. ?�시 ?�청?�주?�요.")
+        if not row:raise HTTPException(404,"?¸ì¦ ?”ì²­??ì°¾ì„ ???†ìŠµ?ˆë‹¤. ?¤ì‹œ ?”ì²­?´ì£¼?¸ìš”.")
         if row["expires_at"]<=datetime.now(timezone.utc):
-            c.execute("DELETE FROM mirae_email_verifications WHERE id=%s",[row["id"]]);c.commit();raise HTTPException(410,"?�증 코드가 만료?�었?�니??")
-        if row["attempts"]>=5:raise HTTPException(429,"?�증 ?�도 ?�수�?초과?�습?�다.")
+            c.execute("DELETE FROM mirae_email_verifications WHERE id=%s",[row["id"]]);c.commit();raise HTTPException(410,"?¸ì¦ ì½”ë“œê°€ ë§Œë£Œ?˜ì—ˆ?µë‹ˆ??")
+        if row["attempts"]>=5:raise HTTPException(429,"?¸ì¦ ?œë„ ?Ÿìˆ˜ë¥?ì´ˆê³¼?ˆìŠµ?ˆë‹¤.")
         if not hmac.compare_digest(digest(data.code),row["code_hash"]):
-            c.execute("UPDATE mirae_email_verifications SET attempts=attempts+1 WHERE id=%s",[row["id"]]);c.commit();raise HTTPException(400,"?�증 코드가 ?�바르�? ?�습?�다.")
-        if c.execute("SELECT id FROM mirae_users WHERE email=%s",[email]).fetchone():raise HTTPException(409,"?��? 가?�된 ?�메?�입?�다.")
+            c.execute("UPDATE mirae_email_verifications SET attempts=attempts+1 WHERE id=%s",[row["id"]]);c.commit();raise HTTPException(400,"?¸ì¦ ì½”ë“œê°€ ?¬ë°”ë¥´ì? ?ŠìŠµ?ˆë‹¤.")
+        if c.execute("SELECT id FROM mirae_users WHERE email=%s",[email]).fetchone():raise HTTPException(409,"?´ë? ê°€?…ëœ ?´ë©”?¼ìž…?ˆë‹¤.")
         u=c.execute("INSERT INTO mirae_users(email,password_hash,name,email_verified) VALUES (%s,%s,%s,true) RETURNING id,email,name",[email,row["password_hash"],row["name"]]).fetchone()
         c.execute("INSERT INTO mirae_user_settings(user_id) VALUES (%s)",[u["id"]]);c.execute("DELETE FROM mirae_email_verifications WHERE email=%s",[email]);c.commit()
     set_session(response,u["id"]);return {"user":u,"verified":True}
@@ -323,8 +326,8 @@ async def signup_verify(data:Verify,response:Response):
 @app.post("/auth/login")
 async def login(data:Login,response:Response):
     with db() as c:u=c.execute("SELECT * FROM mirae_users WHERE email=%s",[data.email.strip().lower()]).fetchone()
-    if not u or not pok(data.password,u["password_hash"]):raise HTTPException(401,"?�메???�는 비�?번호가 ?�바르�? ?�습?�다.")
-    if not u.get("email_verified",True):raise HTTPException(403,"?�메???�증???�료?��? ?��? 계정?�니??")
+    if not u or not pok(data.password,u["password_hash"]):raise HTTPException(401,"?´ë©”???ëŠ” ë¹„ë?ë²ˆí˜¸ê°€ ?¬ë°”ë¥´ì? ?ŠìŠµ?ˆë‹¤.")
+    if not u.get("email_verified",True):raise HTTPException(403,"?´ë©”???¸ì¦???„ë£Œ?˜ì? ?Šì? ê³„ì •?…ë‹ˆ??")
     set_session(response,u["id"])
     with db() as c:c.execute("UPDATE mirae_users SET last_signed_in=now(),updated_at=now() WHERE id=%s",[u["id"]]);c.commit()
     return {"user":{"id":u["id"],"email":u["email"],"name":u["name"]}}
@@ -339,20 +342,20 @@ async def logout(request:Request,response:Response):
 @app.get("/auth/me")
 async def me(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     return {"user":{"id":u["id"],"email":u["email"],"name":u["name"]}}
 
 @app.get("/profile")
 async def get_profile(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     return {"name":u["name"],"email":u["email"],"bio":u.get("bio",""),"birth_date":u["birth_date"].isoformat() if u.get("birth_date") else None,"avatar_url":u.get("avatar_url","")}
 
 @app.put("/profile")
 async def put_profile(data:Profile,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
-    if data.avatar_url and not re.match(r"^https?://",data.avatar_url,re.I):raise HTTPException(400,"?�로???��?지 URL?� http:// ?�는 https://?�야 ?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
+    if data.avatar_url and not re.match(r"^https?://",data.avatar_url,re.I):raise HTTPException(400,"?„ë¡œ???´ë?ì§€ URL?€ http:// ?ëŠ” https://?¬ì•¼ ?©ë‹ˆ??")
     with db() as c:
         r=c.execute("UPDATE mirae_users SET name=%s,bio=%s,birth_date=%s,avatar_url=%s,updated_at=now() WHERE id=%s RETURNING id,email,name,bio,birth_date,avatar_url",[data.name.strip(),data.bio.strip(),data.birth_date,data.avatar_url.strip(),u["id"]]).fetchone();c.commit()
     return {"name":r["name"],"email":r["email"],"bio":r["bio"],"birth_date":r["birth_date"].isoformat() if r["birth_date"] else None,"avatar_url":r["avatar_url"]}
@@ -360,14 +363,14 @@ async def put_profile(data:Profile,request:Request):
 @app.get("/settings")
 async def get_settings(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:r=c.execute("SELECT theme,personality,instructions,web_search,temperature FROM mirae_user_settings WHERE user_id=%s",[u["id"]]).fetchone()
     return r or {"theme":"light","personality":"balanced","instructions":"","web_search":True,"temperature":.7}
 
 @app.put("/settings")
 async def put_settings(data:Settings,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:
         c.execute("INSERT INTO mirae_user_settings(user_id,theme,personality,instructions,web_search,temperature) VALUES (%s,%s,%s,%s,true,%s) ON CONFLICT(user_id) DO UPDATE SET theme=EXCLUDED.theme,personality=EXCLUDED.personality,instructions=EXCLUDED.instructions,web_search=true,temperature=EXCLUDED.temperature,updated_at=now()",[u["id"],data.theme,data.personality,data.instructions,data.temperature]);c.commit()
     result=data.model_dump();result["web_search"]=True;return result
@@ -375,10 +378,10 @@ async def put_settings(data:Settings,request:Request):
 @app.get("/history")
 async def history(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:
         r=c.execute("""SELECT h.id,h.role,h.content,h.mode,h.model,h.sources,h.conversation_id,h.attachments,h.created_at,
-                              COALESCE(cv.title,'???�??) AS conversation_title
+                              COALESCE(cv.title,'???€??) AS conversation_title
                        FROM mirae_chat_history h
                        LEFT JOIN mirae_conversations cv ON cv.id=h.conversation_id
                        WHERE h.user_id=%s ORDER BY h.created_at ASC LIMIT 600""",[u["id"]]).fetchall()
@@ -387,11 +390,11 @@ async def history(request:Request):
 @app.get("/conversations")
 async def conversations(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:
         rows=c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
         for row in rows:
-            if row["title"]=="???�??:
+            if row["title"]=="???€??:
                 first=c.execute("SELECT content FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s ORDER BY created_at ASC,id ASC LIMIT 1",[u["id"],row["id"]]).fetchone()
                 if first:
                     title=make_conversation_title(first["content"])
@@ -402,18 +405,18 @@ async def conversations(request:Request):
 @app.put("/conversations/{conversation_id}")
 async def rename_conversation(conversation_id:str,data:ConversationRename,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     title=re.sub(r"\s+"," ",data.title.strip())[:120]
     with db() as c:
         r=c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s RETURNING id,title",[title,conversation_id,u["id"]]).fetchone()
-        if not r:raise HTTPException(404,"?�?��? 찾을 ???�습?�다.")
+        if not r:raise HTTPException(404,"?€?”ë? ì°¾ì„ ???†ìŠµ?ˆë‹¤.")
         c.commit()
     return r
 
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id:str,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:
         c.execute("DELETE FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s",[u["id"],conversation_id])
         r=c.execute("DELETE FROM mirae_conversations WHERE user_id=%s AND id=%s RETURNING id",[u["id"],conversation_id]).fetchone()
@@ -423,13 +426,13 @@ async def delete_conversation(conversation_id:str,request:Request):
 @app.get("/memories")
 async def list_memories(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:return c.execute("SELECT id,content,created_at,updated_at FROM mirae_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
 
 @app.post("/memories")
 async def create_memory(data:MemoryCreate,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:
         r=c.execute("INSERT INTO mirae_memories(user_id,content) VALUES (%s,%s) RETURNING id,content,created_at,updated_at",[u["id"],data.content.strip()]).fetchone();c.commit()
     return r
@@ -437,7 +440,7 @@ async def create_memory(data:MemoryCreate,request:Request):
 @app.delete("/memories/{memory_id}")
 async def delete_memory(memory_id:int,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:
         r=c.execute("DELETE FROM mirae_memories WHERE id=%s AND user_id=%s RETURNING id",[memory_id,u["id"]]).fetchone();c.commit()
     return {"ok":True,"deleted":bool(r)}
@@ -445,7 +448,7 @@ async def delete_memory(memory_id:int,request:Request):
 @app.put("/feedback")
 async def feedback(data:dict[str,Any],request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     value=str(data.get("feedback",""))
     if value not in {"like","dislike"}:raise HTTPException(400,"feedback must be like or dislike.")
     mh=str(data.get("message_hash","")).strip()
@@ -470,13 +473,13 @@ def templ(v:Any,p:dict):
 
 def valid_url(url:str):
     p=urlparse(url)
-    if p.scheme not in {"http","https"} or not p.hostname:raise HTTPException(400,"?�킬 URL?� http:// ?�는 https://?�야 ?�니??")
+    if p.scheme not in {"http","https"} or not p.hostname:raise HTTPException(400,"?¤í‚¬ URL?€ http:// ?ëŠ” https://?¬ì•¼ ?©ë‹ˆ??")
     host=p.hostname.lower().rstrip(".")
-    if host in {"localhost","localhost.localdomain"}:raise HTTPException(400,"localhost???�킬?�서 ?�용?????�습?�다.")
+    if host in {"localhost","localhost.localdomain"}:raise HTTPException(400,"localhost???¤í‚¬?ì„œ ?¬ìš©?????†ìŠµ?ˆë‹¤.")
     try:
         for info in socket.getaddrinfo(host,p.port or (443 if p.scheme=="https" else 80),type=socket.SOCK_STREAM):
             ip=ipaddress.ip_address(info[4][0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:raise HTTPException(400,"공개 ?�터??주소�??�킬 URL�??�록?????�습?�다.")
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:raise HTTPException(400,"ê³µê°œ ?¸í„°??ì£¼ì†Œë§??¤í‚¬ URLë¡??±ë¡?????ˆìŠµ?ˆë‹¤.")
     except HTTPException:raise
     except Exception:pass
 
@@ -486,7 +489,7 @@ async def run_skill(s:dict,p:dict):
         try:
             headers=templ(json.loads(s["headers"]),p)
             if not isinstance(headers,dict):raise ValueError
-        except Exception:raise HTTPException(400,"Headers??JSON 객체?�야 ?�니??")
+        except Exception:raise HTTPException(400,"Headers??JSON ê°ì²´?¬ì•¼ ?©ë‹ˆ??")
     method=s["method"].upper();query=p if method in {"GET","DELETE"} else None;body=None
     if method not in {"GET","DELETE"} and s["body"].strip():
         raw=templ(s["body"],p)
@@ -500,72 +503,72 @@ async def run_skill(s:dict,p:dict):
 @app.get("/skills")
 async def skills(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:return c.execute("SELECT id,name,description,url,method,headers,body,active,created_at,updated_at FROM mirae_skills WHERE user_id=%s ORDER BY created_at DESC",[u["id"]]).fetchall()
 
 @app.post("/skills")
 async def skill_create(data:SkillCreate,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     valid_url(str(data.url))
     if data.headers.strip():
         try:
             if not isinstance(json.loads(data.headers),dict):raise ValueError
-        except Exception:raise HTTPException(400,"Headers??JSON 객체?�야 ?�니??")
+        except Exception:raise HTTPException(400,"Headers??JSON ê°ì²´?¬ì•¼ ?©ë‹ˆ??")
     with db() as c:
         try:
             r=c.execute("INSERT INTO mirae_skills(user_id,name,description,url,method,headers,body) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id,name,description,url,method,headers,body,active,created_at,updated_at",[u["id"],data.name.strip(),data.description.strip(),str(data.url),data.method,data.headers,data.body]).fetchone();c.commit()
-        except psycopg.errors.UniqueViolation:c.rollback();raise HTTPException(409,"같�? ?�름???�킬???��? ?�습?�다.")
+        except psycopg.errors.UniqueViolation:c.rollback();raise HTTPException(409,"ê°™ì? ?´ë¦„???¤í‚¬???´ë? ?ˆìŠµ?ˆë‹¤.")
     return r
 
 @app.post("/skills/from-prompt")
 async def skill_from_prompt(data:SkillPromptCreate,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     urls=re.findall(r"https?://[^\s<>{}\"]+",data.prompt)
-    if not urls:raise HTTPException(400,"?�롬?�트??API URL(http:// ?�는 https://)???�함?�주?�요.")
+    if not urls:raise HTTPException(400,"?„ë¡¬?„íŠ¸??API URL(http:// ?ëŠ” https://)???¬í•¨?´ì£¼?¸ìš”.")
     parse_prompt=[
         {"role":"system","content":"Turn the user's natural-language skill description into ONLY one JSON object with keys name,description,url,method,headers,body. method must be GET,POST,PUT,PATCH,DELETE. Do not invent a URL: use exactly the URL from the user prompt. For GET/DELETE, put no body. For POST/PUT/PATCH, if the user names input fields, use {{field}} placeholders in JSON body. headers should be a JSON object string or empty. No Markdown."},
         {"role":"user","content":data.prompt}
     ]
     raw=await generate_once(parse_prompt,0.1,220)
     match=re.search(r"\{.*\}",raw,re.S)
-    if not match:raise HTTPException(400,"?�킬 ?�명??구조?�하지 못했?�니?? URL�??�용 방법????구체?�으�??�어주세??")
+    if not match:raise HTTPException(400,"?¤í‚¬ ?¤ëª…??êµ¬ì¡°?”í•˜ì§€ ëª»í–ˆ?µë‹ˆ?? URLê³??¬ìš© ë°©ë²•????êµ¬ì²´?ìœ¼ë¡??ì–´ì£¼ì„¸??")
     try:obj=json.loads(match.group(0))
-    except Exception:raise HTTPException(400,"?�킬 ?�정???��? 못했?�니??")
-    if str(obj.get("url","")) != urls[0].rstrip(".,)"):raise HTTPException(400,"AI가 ?�력??API URL???�롬?�트??URL�??�치?��? ?�습?�다.")
+    except Exception:raise HTTPException(400,"?¤í‚¬ ?¤ì •???½ì? ëª»í–ˆ?µë‹ˆ??")
+    if str(obj.get("url","")) != urls[0].rstrip(".,)"):raise HTTPException(400,"AIê°€ ?…ë ¥??API URL???„ë¡¬?„íŠ¸??URLê³??¼ì¹˜?˜ì? ?ŠìŠµ?ˆë‹¤.")
     try:
         sc=SkillCreate(name=str(obj.get("name","api-skill")),description=str(obj.get("description","")),url=str(obj["url"]),method=str(obj.get("method","GET")).upper(),headers=str(obj.get("headers","")),body=str(obj.get("body","")))
-    except Exception as e:raise HTTPException(400,f"?�성???�킬 ?�식???�바르�? ?�습?�다: {str(e)[:200]}")
+    except Exception as e:raise HTTPException(400,f"?ì„±???¤í‚¬ ?•ì‹???¬ë°”ë¥´ì? ?ŠìŠµ?ˆë‹¤: {str(e)[:200]}")
     return await skill_create(sc,request)
 
 @app.delete("/skills/{skill_id}")
 async def skill_delete(skill_id:int,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:c.execute("DELETE FROM mirae_skills WHERE id=%s AND user_id=%s",[skill_id,u["id"]]);c.commit()
     return {"ok":True}
 
 @app.post("/skills/{skill_id}/run")
 async def skill_run(skill_id:int,data:SkillRun,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:s=c.execute("SELECT * FROM mirae_skills WHERE id=%s AND user_id=%s AND active=true",[skill_id,u["id"]]).fetchone()
-    if not s:raise HTTPException(404,"?�킬??찾을 ???�습?�다.")
+    if not s:raise HTTPException(404,"?¤í‚¬??ì°¾ì„ ???†ìŠµ?ˆë‹¤.")
     try:r=await run_skill(s,data.params)
     except HTTPException:raise
-    except Exception as e:raise HTTPException(502,f"?�킬 ?�청???�패?�습?�다: {str(e)[:300]}")
+    except Exception as e:raise HTTPException(502,f"?¤í‚¬ ?”ì²­???¤íŒ¨?ˆìŠµ?ˆë‹¤: {str(e)[:300]}")
     return {"skill":s["name"],"result":r}
 
 async def run_skill_command(message,request):
     m=re.match(r"^\s*/skill\s+([^\s]+)(?:\s+(\{.*\}))?\s*$",message,re.S|re.I)
     if not m:return None
     u=session_user(request)
-    if not u:raise HTTPException(401,"?�킬???�용?�려�?로그?�해주세??")
+    if not u:raise HTTPException(401,"?¤í‚¬???¬ìš©?˜ë ¤ë©?ë¡œê·¸?¸í•´ì£¼ì„¸??")
     try:p=json.loads(m.group(2) or "{}")
-    except Exception:raise HTTPException(400,'?�라미터??JSON?�어???�니?? ?? /skill weather {"city":"천안"}')
+    except Exception:raise HTTPException(400,'?Œë¼ë¯¸í„°??JSON?´ì–´???©ë‹ˆ?? ?? /skill weather {"city":"ì²œì•ˆ"}')
     with db() as c:s=c.execute("SELECT * FROM mirae_skills WHERE user_id=%s AND lower(name)=lower(%s) AND active=true",[u["id"],m.group(1)]).fetchone()
-    if not s:raise HTTPException(404,f"'{m.group(1)}' ?�킬??찾을 ???�습?�다.")
+    if not s:raise HTTPException(404,f"'{m.group(1)}' ?¤í‚¬??ì°¾ì„ ???†ìŠµ?ˆë‹¤.")
     return s,await run_skill(s,p)
 
 def model_headers():
@@ -618,7 +621,7 @@ async def prepare(req,request):
 async def chat(req:ChatRequest,request:Request):
     sk=await run_skill_command(req.message,request);u=session_user(request)
     if sk:
-        s,r=sk;reply=f"[?�킬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
+        s,r=sk;reply=f"[?¤í‚¬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
         if u:
             cid=save_chat(u["id"],req.message,reply,"skill",[{"type":"skill","name":s["name"]}],req.conversation_id or "")
             if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
@@ -638,23 +641,23 @@ async def chat_stream(req:ChatRequest,request:Request):
             sk=await run_skill_command(req.message,request);u=session_user(request)
             if sk:
                 s,r=sk
-                yield event("stage",{"id":"skill","label":f"'{s['name']}' ?�킬 ?�행 �?})
-                reply=f"[?�킬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
+                yield event("stage",{"id":"skill","label":f"'{s['name']}' ?¤í‚¬ ?¤í–‰ ì¤?})
+                reply=f"[?¤í‚¬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
                 yield event("delta",{"text":reply})
                 cid=""
                 if u:
                     cid=save_chat(u["id"],req.message,reply,"skill",[{"type":"skill","name":s["name"]}],req.conversation_id or "")
                     if current_title_missing(u["id"],cid):
                         await finalize_conversation(u["id"],cid,req.message)
-                yield event("conversation",{"id":cid,"title":"?�킬 ?�행"})
+                yield event("conversation",{"id":cid,"title":"?¤í‚¬ ?¤í–‰"})
                 yield event("done",{"model":"skill","sources":[],"conversation_id":cid})
                 return
-            yield event("stage",{"id":"analyze","label":"질문 분석 �?})
+            yield event("stage",{"id":"analyze","label":"ì§ˆë¬¸ ë¶„ì„ ì¤?})
             u,sources,msgs,need=await prepare(req,request)
             if need:
-                yield event("stage",{"id":"search","label":"관???�보 ?�인 �?})
+                yield event("stage",{"id":"search","label":"ê´€???•ë³´ ?•ì¸ ì¤?})
                 yield event("sources",{"sources":sources})
-            yield event("stage",{"id":"generate","label":"?��? ?�성 �?});chunks=[]
+            yield event("stage",{"id":"generate","label":"?µë? ?ì„± ì¤?});chunks=[]
             try:
                 async for piece in generate_stream(msgs,req.temperature,req.max_tokens):chunks.append(piece);yield event("delta",{"text":piece})
             except Exception:
@@ -666,10 +669,10 @@ async def chat_stream(req:ChatRequest,request:Request):
                 cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
                 is_first=(current_title_missing(u["id"],cid))
                 if is_first:
-                    yield event("stage",{"id":"title","label":"?�???�목 ?�리 �?})
+                    yield event("stage",{"id":"title","label":"?€???œëª© ?•ë¦¬ ì¤?})
                     await finalize_conversation(u["id"],cid,req.message)
                     with db() as c:title_row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s",[cid]).fetchone()
-                    yield event("conversation",{"id":cid,"title":title_row["title"] if title_row else "???�??})
+                    yield event("conversation",{"id":cid,"title":title_row["title"] if title_row else "???€??})
             yield event("done",{"model":MODEL_NAME,"sources":sources,"conversation_id":cid})
         except HTTPException as e:yield event("error",{"message":e.detail})
         except Exception as e:yield event("error",{"message":str(e)[:500]})
@@ -678,21 +681,21 @@ async def chat_stream(req:ChatRequest,request:Request):
 @app.get("/api-keys")
 async def list_keys(request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:return c.execute("SELECT id,name,key_prefix,state,last_used_at,revoked_at,created_at FROM mirae_api_keys WHERE user_id=%s ORDER BY created_at DESC",[u["id"]]).fetchall()
 
 @app.post("/api-keys")
 async def create_key(data:KeyCreate,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     raw="mk_"+secrets.token_urlsafe(32);prefix=raw[:10]
     with db() as c:c.execute("INSERT INTO mirae_api_keys(user_id,name,key_prefix,key_hash) VALUES (%s,%s,%s,%s)",[u["id"],data.name,prefix,digest(raw)]);c.commit()
-    return {"key":raw,"prefix":prefix,"warning":"??값�? 지�???번만 ?�시?�니??"}
+    return {"key":raw,"prefix":prefix,"warning":"??ê°’ì? ì§€ê¸???ë²ˆë§Œ ?œì‹œ?©ë‹ˆ??"}
 
 @app.delete("/api-keys/{key_id}")
 async def revoke_key(key_id:int,request:Request):
     u=session_user(request)
-    if not u:raise HTTPException(401,"로그?�이 ?�요?�니??")
+    if not u:raise HTTPException(401,"ë¡œê·¸?¸ì´ ?„ìš”?©ë‹ˆ??")
     with db() as c:c.execute("UPDATE mirae_api_keys SET state='revoked',revoked_at=now() WHERE id=%s AND user_id=%s",[key_id,u["id"]]);c.commit()
     return {"ok":True}
 
