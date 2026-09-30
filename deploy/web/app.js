@@ -414,7 +414,7 @@ function selectPage(page){
 }
 document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>selectPage(b.dataset.page));
 $("#closeSettings").onclick=()=>$("#settingsOverlay").classList.add("hidden");
-$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#openKeys").onclick=()=>{openSettings("developer");loadApiKeys()};$("#openDocs").onclick=()=>window.open("https://api.koharu.live/docs","_blank","noopener,noreferrer");
+$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#openKeys").onclick=()=>openSettings("developer");$("#openDocs").onclick=()=>window.open("https://api.koharu.live/docs","_blank","noopener,noreferrer");
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
   try{
@@ -487,13 +487,6 @@ async function createApiKey(){
     const d=await req("/api-keys",{method:"POST",body:JSON.stringify({name})});
     $("#apiKeyName").value="";$("#apiKeyReveal").textContent=d.key||"";$("#apiKeyRevealWrap").classList.remove("hidden");loadApiKeys();
   }catch(e){alert(e.message)}finally{btn.disabled=false}
-}
-function createApiKey(){
-  const name=$("#apiKeyName").value.trim();if(!name)return;
-  const btn=$("#createApiKey");btn.disabled=true;
-  req("/api-keys",{method:"POST",body:JSON.stringify({name})}).then(d=>{
-    $("#apiKeyName").value="";$("#apiKeyReveal").textContent=d.key||"";$("#apiKeyRevealWrap").classList.remove("hidden");loadApiKeys();
-  }).catch(e=>alert(e.message)).finally(()=>btn.disabled=false);
 }
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("#skillForm").onsubmit=async e=>{
