@@ -296,7 +296,7 @@ async function deleteConversation(c){
     if(c.id===currentId)newChat(false);else renderHistory();
   }catch(e){alert(e.message)}
 }
-document.addEventListener("click",e=>{if(!e.target.closest(".history-row"))closeConversationMenus()});
+document.addEventListener("click",e=>{if(e.target.closest(".history-menu")||e.target.closest(".conversation-menu"))return;closeConversationMenus()});
 function loadChat(id){
   const c=chats.find(x=>x.id===id);if(!c)return;
   currentId=id;currentTitle=c.title||"새 대화";current=c.messages||[];attachments=[];renderAttachmentStrip();$("#messages").innerHTML="";
