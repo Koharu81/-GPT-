@@ -238,22 +238,29 @@ function finish(box){
   if(!box.e.querySelector(".message-actions"))addMessageActions(box.e,simpleHash(box.raw||box.bubble.textContent),box.raw||box.bubble.textContent);
 }
 function restoreServer(rows,convs=[]){
-  const by={};
-  const meta=Object.fromEntries(convs.map(x=>[x.id,x]));
-  for(const c of convs){
-    by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),messages:[]};
-  }
+  const by={},meta=Object.fromEntries(convs.map(x=>[x.id,x])),legacy=[];
+  for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),messages:[]};
   for(const x of rows){
+    const message={role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""};
     const id=String(x.conversation_id||"").trim();
-    if(!id)continue;
-    if(!by[id])by[id]={id:id,title:conversationTitle(x.conversation_title||"새 대화"),messages:[]};
-    by[id].messages.push({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""});
+    if(id){
+      if(!by[id])by[id]={id,title:conversationTitle(x.conversation_title||"새 대화"),messages:[]};
+      by[id].messages.push(message);
+    }else legacy.push({...message,created_at:x.created_at});
   }
-  chats=Object.values(by).sort((a,b)=>{
-    const ta=meta[a.id]?.updated_at||"";
-    const tb=meta[b.id]?.updated_at||"";
-    return new Date(ta)-new Date(tb);
-  }).slice(-100);
+  const groups=[];let group=null;
+  for(const m of legacy){
+    if(m.role==="user"||!group){if(group?.messages?.length)groups.push(group);group={messages:[]}}
+    group.messages.push(m);
+  }
+  if(group?.messages?.length)groups.push(group);
+  const empty=Object.values(by).filter(c=>!c.messages.length).sort((a,b)=>new Date(meta[a.id]?.created_at||0)-new Date(meta[b.id]?.created_at||0));
+  groups.forEach((g,i)=>{if(empty[i])empty[i].messages=g.messages});
+  for(const c of Object.values(by)){
+    const first=c.messages.find(m=>m.role==="user");
+    if(first&&(c.title==="새 대화"||!c.title))c.title=conversationTitle(first.content);
+  }
+  chats=Object.values(by).sort((a,b)=>new Date(meta[a.id]?.updated_at||0)-new Date(meta[b.id]?.updated_at||0)).slice(-100);
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
@@ -325,11 +332,14 @@ async function streamAsk(text,box){
   if(!type.includes("text/event-stream")){const d=await r.json();box.raw=d.reply||"";renderBubble(box.bubble,box.raw);if(d.sources?.length)renderSources(box.e,d.sources);finish(box);return d}
   const reader=r.body.getReader(),dec=new TextDecoder();let buffer="",state={sources:[]};
   while(true){
-    const v=await reader.read();if(v.done)break;buffer+=dec.decode(v.value,{stream:true});
-    const blocks=buffer.split("\n\n");buffer=blocks.pop()||"";blocks.forEach(b=>parseSSEBlock(b,box,state));
+    const v=await reader.read();if(v.done)break;buffer+=dec.decode(v.value,{stream:true}).replace(/\r\n/g,"\n");
+    const blocks=buffer.split("\n\n");buffer=blocks.pop()||"";for(const block of blocks)parseSSEBlock(block,box,state);
   }
+  buffer+=dec.decode();
   if(buffer.trim())parseSSEBlock(buffer,box,state);
-  return {reply:box.raw||"",sources:state.sources,conversation_id:state.conversation_id,title:state.title||currentTitle};
+  if(!box.raw.trim())throw Error("AI 서버가 답변을 반환하지 않았습니다.");
+  if(state.conversation_id)currentId=state.conversation_id;
+  return {reply:box.raw.trim(),sources:state.sources,conversation_id:state.conversation_id,title:state.title||currentTitle};
 }
 async function ask(text){
   text=text.trim();if(!text&&!attachments.length)return;
@@ -338,7 +348,7 @@ async function ask(text){
   attachments=[];renderAttachmentStrip();
   if(!current.length)$("#messages").innerHTML="";
   add("user",text,[],"",sentAttachments);current.push({role:"user",content:text,attachments:sentAttachments.map(({name,type,size,text})=>({name,type,size,text}))});if(current.length===1&&currentTitle==="새 대화"){currentTitle=conversationTitle(text);$("#title").textContent=currentTitle}else $("#title").textContent=currentTitle;$("#input").value="";$("#send").disabled=true;
-  const saved=attachments;attachments=sentAttachments;
+  attachments=sentAttachments;
   const box=createAssistant();
   try{const d=await streamAsk(text,box);current.push({role:"assistant",content:d.reply,sources:d.sources||[]});saveLocal()}
   catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop()}
@@ -396,7 +406,7 @@ function selectPage(page){
 }
 document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>selectPage(b.dataset.page));
 $("#closeSettings").onclick=()=>$("#settingsOverlay").classList.add("hidden");
-$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#openKeys").onclick=()=>location.href="/api-keys";$("#openDocs").onclick=()=>location.href="/api-docs";
+$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#apiKeysMenu").onclick=()=>location.href="/api-keys.html";$("#apiDocsMenu").onclick=()=>location.href="https://api.koharu.live/docs";
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
   try{
