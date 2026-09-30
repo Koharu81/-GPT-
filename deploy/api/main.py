@@ -168,7 +168,9 @@ Web search is always performed for normal chat requests. Search results may be i
 Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
 Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{attachment_text}{chart_rule}{src}{sk}"""
 
-def ensure_conversation(uid,cid,title="???€??):
+DEFAULT_CONVERSATION_TITLE="\uc0c8 \ub300\ud654"
+
+def ensure_conversation(uid,cid,title=DEFAULT_CONVERSATION_TITLE):
     if not cid:cid=secrets.token_hex(16)
     with db() as c:
         c.execute("INSERT INTO mirae_conversations(id,user_id,title) VALUES (%s,%s,%s) ON CONFLICT(id) DO NOTHING",[cid,uid,title])
@@ -179,10 +181,21 @@ def make_conversation_title(message):
     text=re.sub(r"\s+"," ",str(message or "")).strip()
     text=re.sub(r"^#+\s*","",text)
     text=re.sub(r"^\s*[>*`-]+\s*","",text)
-    return text[:60].rstrip() or "???€??
+    return (text[:24].rstrip()+("…" if len(text)>24 else "")) or DEFAULT_CONVERSATION_TITLE
 
 async def generate_title(message):
-    return make_conversation_title(message)
+    fallback=make_conversation_title(message)
+    try:
+        raw=await generate_once([
+            {"role":"system","content":"첫 사용자 메시지를 보고 대화 목록에 표시할 짧고 구체적인 제목을 하나 만들어라. 핵심 주제를 8~20자 한국어로 요약하라. 사용자의 질문 전체를 복사하지 말고 요청형 표현도 제거하라. 설명, 따옴표, 번호, 이모지는 출력하지 마라."},
+            {"role":"user","content":str(message or "")[:1600]}
+        ],0.15,48)
+        title=re.sub(r"\s+"," ",raw).strip().strip("`\"'")
+        title=re.sub(r"^(제목\s*[:：]\s*)","",title,flags=re.I).strip()
+        if 2<=len(title)<=30:return title
+    except Exception:
+        pass
+    return fallback
 
 def save_chat(uid,msg,reply,mode,sources,cid="",attachments=None):
     cid=ensure_conversation(uid,cid)
@@ -197,16 +210,17 @@ def current_title_missing(uid,cid):
     if not cid:return False
     with db() as c:
         row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s AND user_id=%s",[cid,uid]).fetchone()
-    return bool(row and row["title"]=="???€??)
+    return bool(row and row["title"]==DEFAULT_CONVERSATION_TITLE)
 
 async def finalize_conversation(uid,cid,first_message):
     if not cid:return
     with db() as c:
         row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s AND user_id=%s",[cid,uid]).fetchone()
-    if row and row["title"]=="???€??:
+    if row and row["title"]==DEFAULT_CONVERSATION_TITLE:
         title=await generate_title(first_message)
         with db() as c:
-            c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",[title,cid,uid]);c.commit()
+            c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",[title,cid,uid])
+            c.commit()
 
 def set_session(resp,uid):
     tok=secrets.token_urlsafe(48); exp=datetime.now(timezone.utc)+timedelta(days=SESSION_DAYS)
