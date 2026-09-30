@@ -4,6 +4,7 @@ let user=null;
 let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
 let chats=[],current=[],currentId=null,authMode="login",pendingSignup=null,resendTimer=null;
+let settingsLoaded=false,profileLoaded=false,historyLoaded=false,settingsSaveTimer=null;
 let currentTitle="새 대화";
 let attachments=[];
 
@@ -51,12 +52,13 @@ async function boot(){
   }catch{}
   fillSettings();renderHistory();newChat(false);
 }
-async function loadSettings(){try{settings=await req("/settings")}catch{}}
-async function loadProfile(){if(user)try{applyProfile(await req("/profile"))}catch{}}
+async function loadSettings(){if(settingsLoaded)return;try{settings=await req("/settings");settingsLoaded=true}catch{}}
+async function loadProfile(){if(user&& !profileLoaded)try{applyProfile(await req("/profile"));profileLoaded=true}catch{}}
 async function loadHistory(){
-  if(user)try{
+  if(!user||historyLoaded)return;
+  try{
     const [rows,convs]=await Promise.all([req("/history"),req("/conversations")]);
-    restoreServer(rows,convs);renderHistory();
+    restoreServer(rows,convs);historyLoaded=true;renderHistory();
   }catch{}
 }
 function setAccountLabel(){
@@ -266,8 +268,9 @@ function renderHistory(){
     row.append(b,menu);h.appendChild(row);
   });
 }
+function closeConversationMenus(){document.querySelectorAll(".conversation-menu").forEach(x=>x.remove())}
 function openConversationMenu(row,c){
-  document.querySelectorAll(".conversation-menu").forEach(x=>x.remove());
+  closeConversationMenus();
   const menu=document.createElement("div");menu.className="conversation-menu";
   const rename=document.createElement("button");rename.textContent="이름 변경";rename.onclick=()=>renameConversation(c);
   const del=document.createElement("button");del.textContent="삭제";del.className="delete-menu";del.onclick=()=>deleteConversation(c);
@@ -289,6 +292,7 @@ async function deleteConversation(c){
     if(c.id===currentId)newChat(false);else renderHistory();
   }catch(e){alert(e.message)}
 }
+document.addEventListener("click",e=>{if(!e.target.closest(".history-row"))closeConversationMenus()});
 function loadChat(id){
   const c=chats.find(x=>x.id===id);if(!c)return;
   currentId=id;currentTitle=c.title||"새 대화";current=c.messages||[];attachments=[];renderAttachmentStrip();$("#messages").innerHTML="";
@@ -308,7 +312,7 @@ function saveLocal(){
 }
 function parseSSEBlock(block,box,state){
   let ev="message",data="";
-  block.split("\n").forEach(line=>{if(line.startsWith("event:"))ev=line.slice(6).trim();if(line.startsWith("data:"))data+=line.slice(5).trim()});
+  block.replace(/\r/g,"").split("\n").forEach(line=>{if(line.startsWith("event:"))ev=line.slice(6).trim();if(line.startsWith("data:"))data+=(data?"\n":"")+line.slice(5).trim()});
   if(!data)return;let obj;try{obj=JSON.parse(data)}catch{return}
   if(ev==="stage")stage(box,obj.label||"처리 중");
   else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"웹 검색 완료 · "+state.sources.length+"개 결과");renderSources(box.e,state.sources)}}
@@ -319,7 +323,7 @@ function parseSSEBlock(block,box,state){
 }
 async function streamAsk(text,box){
   const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
-  const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify(body)});
   if(!r.ok)throw Error("스트리밍 요청에 실패했습니다.");
   const type=r.headers.get("content-type")||"";
   if(!type.includes("text/event-stream")){const d=await r.json();box.raw=d.reply||"";renderBubble(box.bubble,box.raw);if(d.sources?.length)renderSources(box.e,d.sources);finish(box);return d}
@@ -329,6 +333,8 @@ async function streamAsk(text,box){
     const blocks=buffer.split("\n\n");buffer=blocks.pop()||"";blocks.forEach(b=>parseSSEBlock(b,box,state));
   }
   if(buffer.trim())parseSSEBlock(buffer,box,state);
+  if(!box.raw.trim())throw Error("모델이 답변을 반환하지 않았습니다. 잠시 후 다시 시도해주세요.");
+  if(!state.done){renderBubble(box.bubble,box.raw);finish(box)}
   return {reply:box.raw||"",sources:state.sources,conversation_id:state.conversation_id,title:state.title||currentTitle};
 }
 async function ask(text){
@@ -379,11 +385,15 @@ function startResendTimer(){
   resendTimer=setInterval(()=>{left--;$("#resendCode").textContent=left?"인증 코드 다시 보내기 ("+left+")":"인증 코드 다시 보내기";if(!left){clearInterval(resendTimer);$("#resendCode").disabled=false}},1000);
 }
 $("#resendCode").onclick=async()=>{try{await req("/auth/signup/request",{method:"POST",body:JSON.stringify(pendingSignup)});$("#authMsg").textContent="새 인증 코드를 보냈습니다.";startResendTimer()}catch(e){$("#authMsg").textContent=e.message}};
-async function saveSettings(){
+function queueSettingsSave(){
   settings={theme:$("#theme").value,personality:$("#personality").value,instructions:$("#instructions").value,web_search:$("#web").value==="true",temperature:settings.temperature||.7};
-  applyTheme();if(user)try{await req("/settings",{method:"PUT",body:JSON.stringify(settings)})}catch(e){console.error(e)}
+  applyTheme();
+  clearTimeout(settingsSaveTimer);
+  if(!user)return;
+  settingsSaveTimer=setTimeout(async()=>{try{await req("/settings",{method:"PUT",body:JSON.stringify(settings)})}catch(e){console.error(e)}},300);
 }
-["theme","personality","instructions","web"].forEach(id=>$("#"+id).onchange=saveSettings);
+["theme","personality","instructions","web"].forEach(id=>{const el=$("#"+id);if(el)el.onchange=queueSettingsSave});
+if($("#instructions"))$("#instructions").oninput=queueSettingsSave;
 async function openSettings(page="general"){
   if(!user){openAuth("login");return}
   await Promise.all([loadSettings(),loadProfile()]);fillSettings();setAccountLabel();$("#settingsOverlay").classList.remove("hidden");selectPage(page);
@@ -396,7 +406,7 @@ function selectPage(page){
 }
 document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>selectPage(b.dataset.page));
 $("#closeSettings").onclick=()=>$("#settingsOverlay").classList.add("hidden");
-$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#openKeys").onclick=()=>location.href="/api-keys";$("#openDocs").onclick=()=>location.href="/api-docs";
+$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#openKeys").onclick=()=>{openSettings("developer");loadApiKeys()};$("#openDocs").onclick=()=>window.open("https://api.koharu.live/docs","_blank","noopener,noreferrer");
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
   try{
@@ -446,6 +456,29 @@ async function loadSkills(){
       box.appendChild(card);
     });
   }catch(e){box.innerHTML="<div class='muted'>"+escapeHtml(e.message)+"</div>"}
+}
+async function loadApiKeys(){
+  if(!user)return;
+  const box=$("#apiKeyList");if(!box)return;
+  box.innerHTML="<div class='muted'>API 키 불러오는 중…</div>";
+  try{
+    const list=await req("/api-keys");box.innerHTML="";
+    if(!list.length){box.innerHTML="<div class='muted'>발급된 API 키가 없습니다.</div>";return}
+    list.forEach(k=>{
+      const card=document.createElement("div");card.className="api-key-card";
+      card.innerHTML="<div><b>"+escapeHtml(k.name)+"</b><small>"+escapeHtml(k.key_prefix)+"•••• · "+escapeHtml(k.state)+"</small></div><button class='danger api-key-revoke' type='button'>폐기</button>";
+      card.querySelector(".api-key-revoke").onclick=async()=>{if(!confirm("이 API 키를 폐기할까요?"))return;try{await req("/api-keys/"+k.id,{method:"DELETE"});loadApiKeys()}catch(e){alert(e.message)}};
+      box.appendChild(card);
+    });
+  }catch(e){box.innerHTML="<div class='muted'>"+escapeHtml(e.message)+"</div>"}
+}
+async function createApiKey(){
+  const name=$("#apiKeyName").value.trim();if(!name)return;
+  const btn=$("#createApiKey");btn.disabled=true;
+  try{
+    const d=await req("/api-keys",{method:"POST",body:JSON.stringify({name})});
+    $("#apiKeyName").value="";$("#apiKeyReveal").textContent=d.key||"";$("#apiKeyRevealWrap").classList.remove("hidden");loadApiKeys();
+  }catch(e){alert(e.message)}finally{btn.disabled=false}
 }
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("#skillForm").onsubmit=async e=>{
