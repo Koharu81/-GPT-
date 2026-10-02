@@ -427,7 +427,9 @@ function selectPage(page){
 }
 document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>selectPage(b.dataset.page));
 $("#closeSettings").onclick=()=>$("#settingsOverlay").classList.add("hidden");
-$("#settingsMenu").onclick=()=>openSettings("general");$("#skillsMenu").onclick=()=>openSettings("skills");$("#apiKeysMenu").onclick=()=>location.href="/api-keys.html";$("#apiDocsMenu").onclick=()=>location.href="https://api.koharu.live/docs";
+$("#settingsMenu").onclick=()=>openSettings("general");
+$("#developerApiKeys").onclick=()=>location.href="/api-keys.html";
+$("#developerApiDocs").onclick=()=>location.href="/api-docs.html";
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
   try{

@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=16">
+<title>Mirae AI</title><link rel="stylesheet" href="/app.css?v=17">
 </head>
 <body>
 <div class="app">
@@ -12,10 +12,7 @@
   <div class="label">대화</div>
   <div class="history" id="history"></div>
   <div class="side">
-    <button class="btn side-btn" id="skillsMenu">스킬</button>
     <button class="btn side-btn" id="settingsMenu">설정</button>
-    <button class="btn side-btn" id="apiKeysMenu">API 키</button>
-    <button class="btn side-btn" id="apiDocsMenu">API 문서</button>
     <button class="account-btn" id="account"><span class="account-avatar" id="accountAvatar">M</span><span class="account-name" id="accountName">계정</span></button>
   </div>
 </aside>
@@ -70,6 +67,7 @@
       <button class="nav-btn" data-page="data">데이터</button>
       <button class="nav-btn" data-page="accountPage">계정</button>
       <button class="nav-btn" data-page="skills">스킬</button>
+      <button class="nav-btn" data-page="developer">개발자</button>
       <button class="nav-btn" data-page="memory">메모리</button>
     </nav>
     <section class="setting-body">
@@ -108,6 +106,12 @@
 
 
 
+      <div class="page hidden" id="page-developer">
+        <div class="section-note"><b>개발자 도구</b><span>Mirae AI API를 사용하는 개발자를 위한 API 키 발급과 공식 API 문서를 제공합니다.</span></div>
+        <div class="setting-row"><div><b>API 키</b><small>외부 프로그램, Discord 봇, 서버 애플리케이션에서 Mirae AI API를 호출할 때 사용하는 인증 키를 관리합니다.</small></div><button class="outline" id="developerApiKeys">API 키 관리</button></div>
+        <div class="setting-row"><div><b>API 문서</b><small>엔드포인트, 인증 방법, 요청 JSON, 응답 구조, Python·JavaScript·TypeScript·discord.py·nextcord 예제와 오류 해결 방법을 확인합니다.</small></div><button class="outline" id="developerApiDocs">API 문서 열기</button></div>
+      </div>
+
       <div class="page hidden" id="page-memory">
         <div class="section-note"><b>메모리</b><span>저장한 내용은 다음 대화에서 Mirae가 참고합니다. 원하지 않는 내용은 언제든 삭제할 수 있습니다.</span></div>
         <form id="memoryForm">
@@ -138,6 +142,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=16" defer></script>
+<script src="/app.js?v=17" defer></script>
 </body>
 </html>

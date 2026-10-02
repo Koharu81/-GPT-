@@ -14,9 +14,10 @@ main{width:min(1080px,calc(100% - 32px));margin:auto;padding:40px 0 80px}.back{c
 <a class="back" href="/">← Mirae AI로 돌아가기</a>
 <section class="hero"><div class="eyebrow">DEVELOPER</div><h1>Mirae AI API</h1><p>OpenAI 호환 API와 실제 배포된 Mirae 사이트 코드를 한 곳에서 확인할 수 있습니다.</p></section>
 <section class="card">
-<h2>기본 정보</h2>
-<div class="note">Base URL: <b>https://api.koharu.live/v1</b><br>인증: <b>Authorization: Bearer YOUR_API_KEY</b></div>
-<ul><li><code>POST /v1/chat/completions</code> · 채팅 API</li><li><code>GET /v1/models</code> · 모델 목록</li><li><code>POST /chat/stream</code> · 웹앱용 SSE 스트리밍</li><li><code>GET /health</code> · 서버 상태</li></ul>
+<h2>이 문서에서 제공하는 것</h2>
+<div class="note">Swagger UI나 별도의 외부 API 서비스 사용법을 설명하는 문서가 아닙니다. <b>Mirae AI 서버 자체를 프로그램에서 직접 호출하는 방법</b>을 처음부터 끝까지 설명합니다.<br><br>Base URL: <b>https://api.koharu.live/v1</b><br>인증: <b>Authorization: Bearer YOUR_API_KEY</b></div>
+<ul><li><code>POST /v1/chat/completions</code> · AI에게 메시지를 보내고 답변을 받는 핵심 API</li><li><code>GET /v1/models</code> · 사용할 모델 ID 확인</li><li><code>GET /health</code> · 서버 상태 확인</li></ul>
+<p><b>AI가 작동하는 핵심 호출은 POST /v1/chat/completions입니다.</b> 웹사이트, Discord 봇, Python 프로그램, Node.js 프로그램 등 어떤 클라이언트에서도 이 엔드포인트를 호출할 수 있습니다.</p>
 </section>
 <section class="card">
 <h2>Chat Completions</h2>
@@ -146,6 +147,23 @@ client.login("DISCORD_BOT_TOKEN");</code></pre></div>
   -H "Content-Type: application/json" ^
   -H "Authorization: Bearer YOUR_API_KEY" ^
   -d "{\"model\":\"Mirae-Qwen2.5-1.5B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"안녕하세요\"}]}"</code></pre></div>
+</section>
+
+<section class="card">
+<h2>웹앱을 직접 만들 때의 핵심 구조</h2>
+<p>Mirae AI를 사용하는 웹앱을 만들 때는 브라우저에 API 키를 넣어 공개하지 않는 것이 중요합니다. 권장 구조는 <b>사용자 브라우저 → 개발자가 만든 백엔드 → Mirae AI API</b>입니다.</p>
+<pre><code>사용자 입력
+   ↓
+내 웹앱 백엔드
+   ↓  Authorization: Bearer YOUR_API_KEY
+POST https://api.koharu.live/v1/chat/completions
+   ↓
+Mirae AI 모델
+   ↓
+choices[0].message.content
+   ↓
+내 백엔드가 브라우저에 답변 전달</code></pre>
+<p class="small">API 키는 HTML, React, Next.js 클라이언트 코드에 직접 넣지 말고 서버 환경 변수에 저장하세요.</p>
 </section>
 
 <section class="card">
