@@ -330,21 +330,33 @@ function parseSSEBlock(block,box,state){
 }
 async function streamAsk(text,box){
   const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
-  const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify(body)});
-  if(!r.ok)throw Error("스트리밍 요청에 실패했습니다.");
-  const type=r.headers.get("content-type")||"";
-  if(!type.includes("text/event-stream")){const d=await r.json();box.raw=d.reply||"";renderBubble(box.bubble,box.raw);if(d.sources?.length)renderSources(box.e,d.sources);finish(box);return d}
-  const reader=r.body.getReader(),dec=new TextDecoder();let buffer="",state={sources:[]};
-  while(true){
-    const v=await reader.read();if(v.done)break;buffer+=dec.decode(v.value,{stream:true}).replace(/\r\n/g,"\n");
-    const blocks=buffer.split("\n\n");buffer=blocks.pop()||"";for(const block of blocks)parseSSEBlock(block,box,state);
+  stage(box,"질문 분석");
+  const r=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok){
+    const d=await r.json().catch(()=>({}));
+    throw Error(d.detail||"AI API 요청에 실패했습니다.");
   }
-  buffer+=dec.decode();
-  if(buffer.trim())parseSSEBlock(buffer,box,state);
-  if(!box.raw.trim())throw Error("AI 서버가 답변을 반환하지 않았습니다. 잠시 후 다시 시도해주세요.");
-  if(state.conversation_id)currentId=state.conversation_id;
-  if(!state.done){renderBubble(box.bubble,box.raw);finish(box)}
-  return {reply:box.raw.trim(),sources:state.sources,conversation_id:state.conversation_id,title:state.title||currentTitle};
+  stage(box,"답변 생성");
+  const d=await r.json();
+  if(!d.reply||!String(d.reply).trim())throw Error("AI 서버가 답변을 반환하지 않았습니다.");
+  if(d.sources?.length){
+    addProcessLog(box,"웹 검색 완료 · "+d.sources.length+"개 결과");
+    renderSources(box.e,d.sources);
+  }
+  if(d.conversation_id)currentId=d.conversation_id;
+  if(d.conversation_id&&d.conversation_id!==currentId)currentId=d.conversation_id;
+  if(d.conversation_id&&d.reply){
+    const title=d.title||currentTitle;
+    currentTitle=title;
+    $("#title").textContent=title;
+  }
+  box.raw=String(d.reply).trim();
+  renderBubble(box.bubble,box.raw);
+  if(d.conversation_id&&currentTitle==="새 대화"){
+    stage(box,"대화 제목 정리");
+  }
+  finish(box);
+  return {reply:box.raw,sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
 }
 async function ask(text){
   text=text.trim();if(!text&&!attachments.length)return;

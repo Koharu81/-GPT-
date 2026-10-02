@@ -15,6 +15,10 @@ APP_VERSION="6.2.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,docs_url=None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
+@app.get("/docs",include_in_schema=False)
+async def custom_docs():
+    return RedirectResponse("https://mirae.koharu.live/api-docs.html",status_code=307)
+
 DATABASE_URL=os.getenv("DATABASE_URL","")
 HF_TOKEN=os.getenv("HF_TOKEN","")
 HF_MODEL_RAW=os.getenv("HF_MODEL","").strip()

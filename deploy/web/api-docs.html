@@ -176,6 +176,80 @@ client.login("DISCORD_BOT_TOKEN");</code></pre></div>
 <h2>스킬과 메모리</h2>
 <p>로그인한 계정은 설정에서 HTTP 스킬을 등록하고 실행할 수 있으며, 자연어 프롬프트로 스킬 구성을 요청할 수도 있습니다. 메모리는 사용자가 직접 저장한 내용을 다음 대화의 컨텍스트에 참고 정보로 제공합니다.</p>
 </section>
+<section class="card">
+<h2>API 호출 순서</h2>
+<ol>
+<li><b>API 키를 발급합니다.</b> Mirae AI의 API 키 페이지에서 키를 한 번 발급합니다.</li>
+<li><b>키를 안전하게 저장합니다.</b> Discord 봇이라면 환경 변수에 저장하고 소스 코드에 직접 넣지 않습니다.</li>
+<li><b>엔드포인트를 호출합니다.</b> <code>POST https://api.koharu.live/v1/chat/completions</code>을 사용합니다.</li>
+<li><b>인증 헤더를 넣습니다.</b> <code>Authorization: Bearer YOUR_API_KEY</code> 형식입니다.</li>
+<li><b>JSON을 전송합니다.</b> 최소한 <code>model</code>과 <code>messages</code>를 넣습니다.</li>
+<li><b>응답을 읽습니다.</b> AI 텍스트는 <code>choices[0].message.content</code>에 있습니다.</li>
+</ol>
+</section>
+<section class="card">
+<h2>최소 요청 예제</h2>
+<pre><button class="copy" data-copy="minimal">복사</button><code id="minimal">POST https://api.koharu.live/v1/chat/completions
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "model": "Mirae-Qwen2.5-1.5B-Instruct",
+  "messages": [
+    {
+      "role": "user",
+      "content": "안녕하세요"
+    }
+  ]
+}</code></pre>
+</section>
+<section class="card">
+<h2>Discord 봇에서의 권장 구조</h2>
+<p>Discord 이벤트를 받은 뒤 Mirae API를 호출하고, 응답에서 텍스트만 추출해 Discord 메시지로 보내면 됩니다.</p>
+<pre><button class="copy" data-copy="botflow">복사</button><code id="botflow">Discord message
+      ↓
+ask_mirae(prompt)
+      ↓
+POST /v1/chat/completions
+      ↓
+choices[0].message.content
+      ↓
+Discord reply</code></pre>
+<p class="small">봇 코드에서 API 호출이 성공하는지 먼저 확인한 뒤 Discord 응답 표시를 붙이면 문제를 분리하기 쉽습니다.</p>
+</section>
+<section class="card">
+<h2>응답에서 사용해야 하는 값</h2>
+<table>
+<thead><tr><th>경로</th><th>용도</th></tr></thead>
+<tbody>
+<tr><td><code>choices[0].message.content</code></td><td>최종 AI 답변</td></tr>
+<tr><td><code>model</code></td><td>실제로 표시된 모델 ID</td></tr>
+<tr><td><code>sources</code></td><td>웹 검색이 사용된 경우의 검색 결과</td></tr>
+<tr><td><code>choices[0].finish_reason</code></td><td>생성 종료 상태</td></tr>
+</tbody>
+</table>
+</section>
+<section class="card">
+<h2>웹 검색이 필요한 경우</h2>
+<p>API는 인사와 일반적인 대화에서 불필요한 웹 검색을 하지 않도록 동작합니다. 최신 정보, 현재 상태, 명시적인 검색 요청처럼 최신 데이터가 필요한 질문은 검색을 시도할 수 있습니다.</p>
+<p>검색 결과는 응답의 <code>sources</code> 배열에 포함될 수 있습니다. 애플리케이션에서 이 배열을 표시하고 싶다면 제목과 URL을 사용하면 됩니다.</p>
+</section>
+<section class="card">
+<h2>모델을 하드코딩하기 싫다면</h2>
+<p>먼저 <code>GET /v1/models</code>를 호출해 계정에서 사용할 수 있는 모델 ID를 확인한 다음 그 값을 <code>model</code>에 넣을 수 있습니다.</p>
+<pre><code>GET https://api.koharu.live/v1/models
+Authorization: Bearer YOUR_API_KEY</code></pre>
+</section>
+<section class="card">
+<h2>실패했을 때 확인 순서</h2>
+<ol>
+<li>HTTP 상태 코드가 401인지 확인합니다. 401이면 API 키 또는 Authorization 헤더 문제입니다.</li>
+<li>422라면 요청 JSON의 필드 이름과 자료형을 확인합니다.</li>
+<li>200인데 답변이 비어 있다면 <code>choices</code>와 <code>message.content</code>를 확인합니다.</li>
+<li>timeout이면 클라이언트 timeout을 충분히 길게 설정하고 다시 요청합니다.</li>
+<li>Discord 봇에서만 실패한다면 같은 API 키와 같은 JSON을 Python/cURL에서 먼저 테스트합니다.</li>
+</ol>
+</section>
 </main><script>
 const $=s=>document.querySelector(s);
 document.querySelectorAll("#langTabs .tab").forEach(tab=>tab.onclick=()=>{
