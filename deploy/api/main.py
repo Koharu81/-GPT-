@@ -12,7 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 APP_VERSION="6.2.0"
-app=FastAPI(title="Mirae AI API",version=APP_VERSION,docs_url=None,redoc_url=None)
+app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 @app.get("/docs",include_in_schema=False)

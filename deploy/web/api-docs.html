@@ -12,10 +12,10 @@ main{width:min(1080px,calc(100% - 32px));margin:auto;padding:40px 0 80px}.back{c
 <body>
 <main>
 <a class="back" href="/">← Mirae AI로 돌아가기</a>
-<section class="hero"><div class="eyebrow">DEVELOPER</div><h1>Mirae AI API</h1><p>OpenAI 호환 API와 실제 배포된 Mirae 사이트 코드를 한 곳에서 확인할 수 있습니다.</p></section>
+<section class="hero"><div class="eyebrow">DEVELOPER DOCUMENTATION</div><h1>Mirae AI API</h1><p>처음 API를 사용하는 개발자도 그대로 복사하고 수정해서 사용할 수 있도록, 호출 주소부터 인증·요청·응답·실전 예제까지 정리한 공식 개발자 문서입니다.</p></section>
 <section class="card">
 <h2>이 문서에서 제공하는 것</h2>
-<div class="note">Swagger UI나 별도의 외부 API 서비스 사용법을 설명하는 문서가 아닙니다. <b>Mirae AI 서버 자체를 프로그램에서 직접 호출하는 방법</b>을 처음부터 끝까지 설명합니다.<br><br>Base URL: <b>https://api.koharu.live/v1</b><br>인증: <b>Authorization: Bearer YOUR_API_KEY</b></div>
+<div class="note"><b>Mirae AI를 실제 프로그램에서 호출하는 방법을 설명하는 수동 제작 개발자 문서</b>입니다. 주소, 인증, 요청 형식, 응답 구조, 예제 코드를 순서대로 따라 하면 Discord 봇이나 웹앱에서 바로 연결할 수 있습니다.<br><br>Base URL: <b>https://api.koharu.live/v1</b><br>인증: <b>Authorization: Bearer YOUR_API_KEY</b></div>
 <ul><li><code>POST /v1/chat/completions</code> · AI에게 메시지를 보내고 답변을 받는 핵심 API</li><li><code>GET /v1/models</code> · 사용할 모델 ID 확인</li><li><code>GET /health</code> · 서버 상태 확인</li></ul>
 <p><b>AI가 작동하는 핵심 호출은 POST /v1/chat/completions입니다.</b> 웹사이트, Discord 봇, Python 프로그램, Node.js 프로그램 등 어떤 클라이언트에서도 이 엔드포인트를 호출할 수 있습니다.</p>
 </section>
