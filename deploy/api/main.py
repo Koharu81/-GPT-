@@ -1,4 +1,4 @@
-import os, re, json, time, secrets, hashlib, hmac, smtplib, socket, ipaddress, asyncio
+import os, re, json, time, secrets, hashlib, hmac, smtplib, socket, ipaddress, asyncio, base64
 from email.message import EmailMessage
 from typing import Any
 from datetime import datetime, timedelta, timezone, date
@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 from io import BytesIO
 import zipfile
 
-APP_VERSION="6.2.0"
+APP_VERSION="6.3.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
@@ -34,6 +34,9 @@ NEWS_RSS="https://news.google.com/rss/search"
 RESEND_API_KEY=os.getenv("RESEND_API_KEY","")
 RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
 RESEND_URL="https://api.resend.com/emails"
+POLLINATIONS_API_KEY=os.getenv("POLLINATIONS_API_KEY","").strip()
+POLLINATIONS_IMAGE_MODEL=os.getenv("POLLINATIONS_IMAGE_MODEL","black-forest-labs/flux.1-schnell").strip()
+POLLINATIONS_VISION_MODEL=os.getenv("POLLINATIONS_VISION_MODEL","google/gemini-3-flash-preview").strip()
 SESSION_DAYS=30
 
 WEB_EXPLICIT=re.compile(r"(웹\s*검색|인터넷(?:에서)?|검색(?:해|해줘|해봐|해서|하고|결과)?|찾아(?:줘|봐|서|서 알려)|공식\s*(?:사이트|자료|문서|페이지)|링크\s*(?:찾|알려)|자료\s*(?:찾|검색))",re.I)
@@ -68,7 +71,7 @@ class ChatMessage(BaseModel): role:str; content:str
 class ChatAttachment(BaseModel):
     name:str=Field(min_length=1,max_length=180)
     type:str=Field("",max_length=180)
-    size:int=Field(0,ge=0,le=10_000_000)
+    size:int=Field(0,ge=0,le=25_000_000)
     text:str=Field("",max_length=20_000)
 class ChatRequest(BaseModel):
     message:str=Field(min_length=1,max_length=12000); history:list[ChatMessage]=Field(default_factory=list)
@@ -147,6 +150,7 @@ async def search_web(t:str):
 
 def system_prompt(req,language,sources,skills,memories=None,profile_data=None,attachments=None):
     rule={"ko":"한국어로 자연스럽게 답하세요. 사용자가 요청하지 않는 한 다른 언어를 섞지 마세요.","ja":"自然な日本語で答えてください。","en":"Answer in natural English unless the user requests another language."}[language]
+    styles={"balanced":"균형 잡힌 말투로 정확성과 자연스러움을 함께 유지하세요.","friendly":"친근하고 편안한 말투를 사용하되 과한 유행어와 이모지는 피하세요.","professional":"전문적이고 구조적인 말투로 답하세요. 필요한 용어는 정확하게 사용하세요.","concise":"핵심부터 짧고 직접적으로 답하세요. 불필요한 반복을 줄이세요.","creative":"아이디어를 적극적으로 확장하되 사실과 창작을 구분하세요."}
     src=""
     if sources:
         src="\n웹 검색 결과:\n"+"\n".join(f"- {x['title']} | {x['published']} | {x['url']} | {x['snippet']}" for x in sources)
@@ -154,7 +158,9 @@ def system_prompt(req,language,sources,skills,memories=None,profile_data=None,at
     mm=memories or []
     mem="\n기억된 사용자 정보(대화에 도움이 될 때만 사용):\n"+"\n".join(f"- {m['content']}" for m in mm) if mm else ""
     p=profile_data or {}
-    profile_text="\n사용자 프로필(개인화에 도움이 될 때만 사용):\n- 이름: "+str(p.get("name",""))+"\n- 자기소개: "+str(p.get("bio",""))+"\n- 생일: "+str(p.get("birth_date",""))
+    profile_text=""
+    if p.get("name") or p.get("bio") or p.get("birth_date"):
+        profile_text="\n사용자 프로필(개인화에 도움이 될 때만 사용):\n- 이름: "+str(p.get("name",""))+"\n- 자기소개: "+str(p.get("bio",""))+"\n- 생일: "+str(p.get("birth_date",""))
     att=attachments or []
     attachment_text="\n첨부파일:\n"+"\n".join(f"- {a['name']} ({a['type'] or 'unknown'}, {a['size']} bytes)"+("\n  추출된 텍스트:\n"+a['text'][:16000] if a.get('text') else "\n  이 파일은 텍스트를 추출하지 않았습니다.") for a in att) if att else ""
     chart_rule="\n차트 규칙: 사용자가 숫자 데이터를 차트/그래프로 보여달라고 하거나 적절한 시각화를 명시적으로 원하면, 짧은 설명 뒤에 반드시 ```mirae-chart 형태의 JSON 블록을 하나 출력하세요. 형식은 {\"type\":\"bar|line|doughnut\",\"title\":\"제목\",\"labels\":[\"A\",\"B\"],\"datasets\":[{\"label\":\"값\",\"data\":[10,20]}]} 입니다. 데이터가 여러 계열이면 datasets를 여러 개 사용하세요. 숫자가 아닌 내용은 차트로 억지로 만들지 마세요."
@@ -162,7 +168,7 @@ def system_prompt(req,language,sources,skills,memories=None,profile_data=None,at
     return f"""You are Mirae AI, a general-purpose generative AI assistant. Current date: 2026-09-30. {rule}
 Do not reveal private chain-of-thought or hidden reasoning. The UI may show only short, high-level progress labels. If the user writes in Korean or Japanese, answer in that language even when the message contains English product names, programming terms, or code. Never switch to English merely because words like discord.py, Python, API, OpenAI, or JavaScript appear. When providing code, keep code in fenced Markdown blocks and keep the surrounding explanation in the user's language. Do not escape Markdown punctuation with backslashes unless the user explicitly asks for literal Markdown source. When the user asks for a chart or graph, use the special fenced block ```mirae-chart with JSON fields type (bar, line, or doughnut), title, labels, and datasets; do not put the chart data into a normal code block. Attachments may contain extracted text; use that text when relevant.
 Web search is performed selectively. Do not search for casual conversation, greetings, or ordinary questions that do not require current information. Search when the user explicitly asks to search/find/check sources or when the question clearly depends on current or time-sensitive information. When results are relevant, use only facts directly supported by the provided title, publication date, URL, and snippet. Never fill missing details from memory and never invent a source, quote, statistic, model, date, product release, policy, or link. Treat claims inside a news article as claims by that article unless a primary source is also supplied. Prefer a compact bullet summary over a large table unless the user explicitly asks for a table. Do not present a table unless the supplied source material supports every cell. If the preview is insufficient, say so. Use Markdown for structure when helpful: headings, bullets, numbered lists, emphasis, links, and fenced code blocks with a language tag. When giving code, place it in a fenced code block and do not escape it into a single long line.
-Use web results only when they are supplied and do not invent citations. Personality: {req.personality[:80]}.
+Use web results only when they are supplied and do not invent citations. Personality setting: {styles.get(req.personality,"균형 잡힌 말투")}. Follow that style consistently. The user's personal instructions below are active instructions for every answer and must be followed unless they conflict with safety or higher-priority instructions.
 Product self-knowledge: {self_info}{profile_text}\nUser instructions: {req.instructions[:4000] or 'none'}.{mem}{attachment_text}{chart_rule}{src}{sk}"""
 
 def ensure_conversation(uid,cid,title="새 대화"):
@@ -350,6 +356,44 @@ async def extract_files(files:list[UploadFile]=File(...)):
         out.append({"name":f.filename or "file","type":f.content_type or "application/octet-stream","size":len(data),"text":text[:200000],"chunks":chunks[:100],"chunk_count":len(chunks),"truncated":len(text)>200000})
     return {"files":out}
 
+@app.post("/images/generate")
+async def generate_image(data:dict[str,Any],request:Request):
+    if not session_user(request):raise HTTPException(401,"로그인이 필요합니다.")
+    prompt=str(data.get("prompt","")).strip()
+    if not prompt:raise HTTPException(400,"이미지 프롬프트가 필요합니다.")
+    if len(prompt)>4000:raise HTTPException(400,"이미지 프롬프트는 4000자까지 입력할 수 있습니다.")
+    if not POLLINATIONS_API_KEY:
+        raise HTTPException(503,"이미지 생성 서버가 설정되지 않았습니다. API 서버 환경변수에 이미지 생성 키를 등록해주세요.")
+    try:
+        async with httpx.AsyncClient(timeout=180,trust_env=False) as x:
+            r=await x.post("https://gen.pollinations.ai/v1/images/generations",headers={"Authorization":"Bearer "+POLLINATIONS_API_KEY,"Content-Type":"application/json"},json={"model":POLLINATIONS_IMAGE_MODEL,"prompt":prompt,"response_format":"url"})
+            if r.status_code>=400:raise HTTPException(502,"이미지 생성 서비스가 요청을 거부했습니다.")
+            body=r.json();item=(body.get("data") or [{}])[0];url=item.get("url")
+            if not url and item.get("b64_json"):url="data:image/png;base64,"+item["b64_json"]
+            if not url:raise HTTPException(502,"이미지 생성 결과가 없습니다.")
+            return {"ok":True,"url":url,"model":POLLINATIONS_IMAGE_MODEL}
+    except HTTPException:raise
+    except Exception as e:raise HTTPException(502,"이미지 생성 요청에 실패했습니다: "+type(e).__name__)
+
+@app.post("/vision")
+async def understand_image(file:UploadFile=File(...),request:Request=None):
+    if not session_user(request):raise HTTPException(401,"로그인이 필요합니다.")
+    if not (file.content_type or "").startswith("image/"):raise HTTPException(400,"이미지 파일만 사용할 수 있습니다.")
+    data=await file.read()
+    if len(data)>12*1024*1024:raise HTTPException(413,"이미지는 12MB 이하만 분석할 수 있습니다.")
+    if not POLLINATIONS_API_KEY:raise HTTPException(503,"비전 모델이 설정되지 않았습니다.")
+    data_url="data:"+(file.content_type or "image/png")+";base64,"+base64.b64encode(data).decode()
+    messages=[{"role":"user","content":[{"type":"text","text":"이 이미지를 한국어로 정확하게 분석해줘. 보이는 사실과 텍스트를 구분하고, 보이지 않는 내용은 추측하지 마."},{"type":"image_url","image_url":{"url":data_url}}]}]
+    try:
+        async with httpx.AsyncClient(timeout=90,trust_env=False) as x:
+            r=await x.post("https://gen.pollinations.ai/v1/chat/completions",headers={"Authorization":"Bearer "+POLLINATIONS_API_KEY,"Content-Type":"application/json"},json={"model":POLLINATIONS_VISION_MODEL,"messages":messages,"max_tokens":1200})
+            if r.status_code>=400:raise HTTPException(502,"비전 모델이 이미지를 처리하지 못했습니다.")
+            body=r.json();content=((body.get("choices") or [{}])[0].get("message") or {}).get("content","")
+            if not content:raise HTTPException(502,"비전 모델이 분석 결과를 반환하지 않았습니다.")
+            return {"ok":True,"text":str(content)[:20000],"model":POLLINATIONS_VISION_MODEL}
+    except HTTPException:raise
+    except Exception as e:raise HTTPException(502,"이미지 분석 요청에 실패했습니다: "+type(e).__name__)
+
 @app.on_event("startup")
 async def startup():
     try:init_db()
@@ -466,9 +510,16 @@ async def get_settings(request:Request):
 async def put_settings(data:Settings,request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    personality=data.personality if data.personality in {"balanced","friendly","professional","concise","creative"} else "balanced"
+    instructions=data.instructions.strip()[:4000]
     with db() as c:
-        c.execute("INSERT INTO mirae_user_settings(user_id,theme,personality,instructions,web_search,temperature) VALUES (%s,%s,%s,%s,true,%s) ON CONFLICT(user_id) DO UPDATE SET theme=EXCLUDED.theme,personality=EXCLUDED.personality,instructions=EXCLUDED.instructions,web_search=true,temperature=EXCLUDED.temperature,updated_at=now()",[u["id"],data.theme,data.personality,data.instructions,data.temperature]);c.commit()
-    result=data.model_dump();result["web_search"]=True;return result
+        c.execute("""INSERT INTO mirae_user_settings(user_id,theme,personality,instructions,web_search,temperature)
+                     VALUES (%s,%s,%s,%s,%s,%s)
+                     ON CONFLICT(user_id) DO UPDATE SET theme=EXCLUDED.theme,personality=EXCLUDED.personality,
+                     instructions=EXCLUDED.instructions,web_search=EXCLUDED.web_search,temperature=EXCLUDED.temperature,updated_at=now()""",
+                  [u["id"],data.theme,personality,instructions,bool(data.web_search),data.temperature]);c.commit()
+    result={"theme":data.theme,"personality":personality,"instructions":instructions,"web_search":bool(data.web_search),"temperature":data.temperature}
+    return result
 
 @app.get("/history")
 async def history(request:Request):
@@ -607,6 +658,20 @@ async def delete_conversation(conversation_id:str,request:Request):
         c.commit()
     return {"ok":True,"deleted":bool(r)}
 
+def auto_register_memory(uid:int,message:str):
+    text=re.sub(r"\s+"," ",str(message or "")).strip()
+    if not text:return
+    candidates=[]
+    if re.search(r"(기억해|기억하|잊지 말|앞으로|내 이름은|나는|제가|내가)",text,re.I):
+        clean=re.sub(r"^(?:기억해줘|기억해|잊지 말아줘|앞으로)\s*[:：]?\s*","",text,flags=re.I).strip()
+        if clean:
+            candidates.append(clean[:1000])
+    for content in candidates:
+        with db() as c:
+            exists=c.execute("SELECT id FROM mirae_memories WHERE user_id=%s AND lower(content)=lower(%s) LIMIT 1",[uid,content]).fetchone()
+            if not exists:
+                c.execute("INSERT INTO mirae_memories(user_id,content) VALUES (%s,%s)",[uid,content]);c.commit()
+
 @app.get("/memories")
 async def list_memories(request:Request):
     u=session_user(request)
@@ -615,11 +680,7 @@ async def list_memories(request:Request):
 
 @app.post("/memories")
 async def create_memory(data:MemoryCreate,request:Request):
-    u=session_user(request)
-    if not u:raise HTTPException(401,"로그인이 필요합니다.")
-    with db() as c:
-        r=c.execute("INSERT INTO mirae_memories(user_id,content) VALUES (%s,%s) RETURNING id,content,created_at,updated_at",[u["id"],data.content.strip()]).fetchone();c.commit()
-    return r
+    raise HTTPException(403,"메모리는 Mirae AI만 자동으로 등록할 수 있습니다.")
 
 @app.delete("/memories/{memory_id}")
 async def delete_memory(memory_id:int,request:Request):
@@ -890,7 +951,7 @@ async def generate_stream(msgs,temp,max_tokens):
 def event(name,data):return f"event: {name}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n"
 
 async def prepare(req,request):
-    u=session_user(request);sources=[];need=wants_web(req.message);skill_list=[];memories=[];profile_data={}
+    u=session_user(request);sources=[];need=bool(req.web_search) and wants_web(req.message);skill_list=[];memories=[];profile_data={}
     if u:
         with db() as c:
             user_row=c.execute("SELECT name,bio,birth_date FROM mirae_users WHERE id=%s",[u["id"]]).fetchone()
@@ -928,6 +989,7 @@ async def chat(req:ChatRequest,request:Request):
     if u:
         cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
         if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
+        asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
     return {"reply":reply,"model":MODEL_NAME,"language":lang(req.message),"sources":sources,"conversation_id":cid}
 
 @app.post("/chat/stream")
@@ -969,6 +1031,7 @@ async def chat_stream(req:ChatRequest,request:Request):
                     await finalize_conversation(u["id"],cid,req.message)
                     with db() as c:title_row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s",[cid]).fetchone()
                     yield event("conversation",{"id":cid,"title":title_row["title"] if title_row else "새 대화"})
+            if u:asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
             yield event("done",{"model":MODEL_NAME,"sources":sources,"conversation_id":cid})
         except HTTPException as e:yield event("error",{"message":e.detail})
         except Exception as e:yield event("error",{"message":str(e)[:500]})

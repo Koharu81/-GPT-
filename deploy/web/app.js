@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s);
-const API="/api";
+const API=location.hostname==="mirae.koharu.live"?"https://api.koharu.live":"/api";
 let user=null;
 let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
@@ -56,6 +56,7 @@ async function renderSharedConversation(code){
   }catch(e){document.body.innerHTML='<main class="shared-page"><div class="shared-card"><h1>공유 대화를 찾을 수 없습니다.</h1><p>링크가 잘못되었거나 더 이상 존재하지 않습니다.</p><a href="/">Mirae AI로 이동</a></div></main>'}
 }
 async function boot(){
+  if($("#conversationSearch"))$("#conversationSearch").value="";
   const shareMatch=location.pathname.match(/^\/share\/([A-Za-z]{8})\/?$/);
   if(shareMatch){await renderSharedConversation(shareMatch[1]);return}
   fillSettings();renderHistory();newChat(false);setupTools();
@@ -176,16 +177,35 @@ async function addFiles(fileList){
   if(attachments.length)$("#globalStatus").textContent=attachments.length+"개 파일 첨부됨";
 }
 async function runImageOcr(item,file){
-  if(!window.Tesseract){
-    const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js";document.head.appendChild(s);
-    await new Promise((res,rej)=>{s.onload=res;s.onerror=rej});
+  try{
+    const fd=new FormData();fd.append("file",file);
+    $("#globalStatus").textContent="이미지 이해 중…";
+    const vision=await req("/vision",{method:"POST",body:fd});
+    if(vision.text){
+      item.text=String(vision.text).slice(0,18000);
+      item.vision=true;
+      renderAttachmentStrip();
+      $("#globalStatus").textContent="이미지 이해 완료";
+      return;
+    }
+  }catch{}
+  try{
+    if(!window.Tesseract){
+      const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js";document.head.appendChild(s);
+      await new Promise((res,rej)=>{s.onload=res;s.onerror=rej});
+    }
+    $("#globalStatus").textContent="이미지 OCR 분석 중…";
+    const result=await Tesseract.recognize(file,"kor+eng");
+    item.text=String(result.data.text||"").slice(0,18000);
+    item.ocr=true;
+    renderAttachmentStrip();
+    $("#globalStatus").textContent="이미지 OCR 완료";
+  }catch{
+    item.text="";
+    item.ocr=false;
+    renderAttachmentStrip();
+    $("#globalStatus").textContent="이미지 첨부 완료";
   }
-  $("#globalStatus").textContent="이미지 OCR 분석 중…";
-  const result=await Tesseract.recognize(file,"kor+eng");
-  item.text=result.data.text||"";
-  item.ocr=true;
-  renderAttachmentStrip();
-  $("#globalStatus").textContent="이미지 OCR 완료";
 }
 function renderMessageAttachments(e,list){
   if(!list?.length)return;
@@ -273,7 +293,7 @@ function add(role,text,sources=[],feedbackKey="",messageAttachments=[]){
   if(role==="assistant"&&sources.length)renderSources(e,sources);
   if(role==="user"&&messageAttachments.length)renderMessageAttachments(e,messageAttachments);
   if(role==="assistant"&&feedbackKey)addMessageActions(e,feedbackKey,text);
-  $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});return e;
+  $("#messages").appendChild(e);e.scrollIntoView({behavior:"auto",block:"end"});return e;
 }
 async function copyText(text,button){
   try{
@@ -308,7 +328,7 @@ function renderSources(e,sources){
   let box=e.querySelector(".sources");
   if(!box){box=document.createElement("div");box.className="sources";e.querySelector(".wrap").appendChild(box)}
   box.innerHTML="";
-  sources.forEach((s,i)=>{const a=document.createElement("a");a.href=s.url;a.target="_blank";a.rel="noopener noreferrer nofollow";a.className="source-card";const host=(()=>{try{return new URL(s.url).hostname.replace(/^www\./,"")}catch{return "source"}})();a.innerHTML="<span class=\"source-index\">"+(i+1)+"</span><span class=\"source-copy\"><b>"+escapeHtml(s.title)+"</b><small>"+escapeHtml(host)+(s.published?" · "+escapeHtml(s.published):"")+"</small></span><span class=\"source-arrow\">↗</span>";box.appendChild(a)});
+  sources.forEach((s,i)=>{const a=document.createElement("a");a.href=s.url;a.target="_blank";a.rel="noopener noreferrer nofollow";a.className="source-card";const host=(()=>{try{return new URL(s.url).hostname.replace(/^www\./,"")}catch{return "source"}})();a.innerHTML="<span class=\"source-index\">"+(i+1)+"</span><span class=\"source-copy\"><b>"+escapeHtml(s.title)+"</b><small>"+escapeHtml(host)+(s.published?" · "+escapeHtml(s.published):"")+"</small><em>"+escapeHtml(s.snippet||"관련 검색 결과")+"</em></span><span class=\"source-arrow\">↗</span>";box.appendChild(a)});
 }
 function createAssistant(){
   const e=document.createElement("article");e.className="msg assistant";
@@ -505,8 +525,23 @@ async function streamAsk(text,box){
   finish(box);
   return {reply:box.raw,sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
 }
+async function generateImage(prompt){
+  const clean=String(prompt||"").replace(/^(?:이미지|그림)\s*(?:생성|그려|만들어)?\s*[:：-]?\s*/i,"").trim();
+  if(!clean)return;
+  const box=createAssistant();
+  stage(box,"이미지 생성 요청");
+  try{
+    const d=await req("/images/generate",{method:"POST",body:JSON.stringify({prompt:clean})});
+    box.bubble.innerHTML="<div class='generated-image'><img src='"+escapeHtml(d.url)+"' alt='생성된 이미지' loading='lazy'><a href='"+escapeHtml(d.url)+"' target='_blank' rel='noopener noreferrer'>이미지 열기</a></div>";
+    finish(box);
+  }catch(e){
+    box.bubble.textContent="이미지를 생성하지 못했습니다. "+e.message;
+    finish(box);
+  }
+}
 async function ask(text){
   text=text.trim();if(!text&&!attachments.length)return;
+  if(/^(?:이미지|그림)\s*(?:생성|그려|만들어)/i.test(text))return generateImage(text);
   if(!text&&attachments.length)text="첨부한 파일을 분석해줘.";
   const sentAttachments=attachments.map(a=>({...a}));
   attachments=[];renderAttachmentStrip();
@@ -530,7 +565,7 @@ function renderAuth(){
   $("#authSwitch").textContent=signup?"이미 계정이 있다면 로그인":"처음이라면 회원가입";$("#authMsg").textContent="";
 }
 async function finishLogin(d){
-  user=d.user;closeAuth();setAccountLabel();await Promise.all([loadSettings(),loadProfile(),loadHistory()]);fillSettings();newChat(false);
+  user=d.user;if($("#conversationSearch"))$("#conversationSearch").value="";closeAuth();setAccountLabel();await Promise.all([loadSettings(),loadProfile(),loadHistory()]);fillSettings();newChat(false);
 }
 $("#authSubmit").onclick=async()=>{
   $("#authMsg").textContent="";
@@ -587,6 +622,7 @@ const paletteCommands=[
   ["코드 실행","코드 실행 샌드박스를 엽니다.",()=>openTool("#codeOverlay")],
   ["파일 첨부","파일 선택 창을 엽니다.",()=>$("#fileInput").click()],
   ["음성 입력","브라우저 음성 입력을 시작합니다.",()=>toggleVoiceInput()],
+  ["이미지 생성","Mirae 이미지 생성기를 엽니다.",()=>{const p=prompt("생성할 이미지를 설명하세요.");if(p)generateImage("이미지 생성: "+p)}],
   ["API 문서","Mirae API 문서를 엽니다.",()=>location.href="/api-docs"],
   ["개발자 설정","API/Webhook/플러그인 관리 화면을 엽니다.",()=>openSettings("developer")],
   ["플러그인 관리","Mirae 플러그인 화면을 엽니다.",()=>openSettings("plugins")]
@@ -635,11 +671,6 @@ async function loadMemories(){
     });
   }catch(e){box.innerHTML='<div class="muted">'+escapeHtml(e.message)+'</div>'}
 }
-$("#memoryForm").onsubmit=async e=>{
-  e.preventDefault();
-  const content=$("#memoryContent").value.trim();if(!content)return;
-  try{await req("/memories",{method:"POST",body:JSON.stringify({content:content})});$("#memoryContent").value="";loadMemories()}catch(err){alert(err.message)}
-};
 $("#registerSkillPrompt").onclick=async()=>{
   const prompt=$("#skillPrompt").value.trim();if(!prompt)return;
   const btn=$("#registerSkillPrompt");btn.disabled=true;btn.textContent="스킬 구성 중…";
@@ -747,7 +778,8 @@ $("#input").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();as
 $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,160)+"px"};
 $("#newChat").onclick=()=>newChat();$("#mobileNew").onclick=()=>newChat();$("#mobileMenu").onclick=()=>$("#sidebar").classList.toggle("open");
 $("#newFolder").onclick=createConversationFolder;
-$("#conversationSearch").oninput=()=>renderHistory();
+let historySearchTimer=null;
+$("#conversationSearch").oninput=()=>{clearTimeout(historySearchTimer);historySearchTimer=setTimeout(renderHistory,80)};
 function closeSidebar(){$("#sidebar").classList.remove("open")}
 $("#chat").onclick=closeSidebar;
 const mq=matchMedia("(prefers-color-scheme:dark)");if(mq.addEventListener)mq.addEventListener("change",()=>{if(settings.theme==="system")applyTheme()});
