@@ -167,6 +167,33 @@ choices[0].message.content
 <p>로그인한 계정은 설정에서 HTTP 스킬을 등록하고 실행할 수 있으며, 자연어 프롬프트로 스킬 구성을 요청할 수도 있습니다. 메모리는 사용자가 직접 저장한 내용을 다음 대화의 컨텍스트에 참고 정보로 제공합니다.</p>
 </section>
 <section class="card">
+<h2>Mirae 플러그인 확장 API</h2>
+<p>플러그인은 사용자가 등록한 외부 HTTPS API를 Mirae에 연결하는 확장 방식입니다. 설정에서 <b>플러그인</b>을 등록한 뒤 허용할 권한을 선택합니다. 플러그인은 허용된 권한만 컨텍스트로 전달받습니다.</p>
+<p class="route">POST /plugins/{plugin_id}/invoke</p>
+<pre><code>{
+  "input": {
+    "query": "사용자 입력"
+  }
+}</code></pre>
+<p>플러그인 서버에는 다음과 같은 JSON이 전달됩니다.</p>
+<pre><code>{
+  "input": {"query": "사용자 입력"},
+  "plugin": {"name": "예제 플러그인", "version": 1},
+  "permissions": ["network", "profile.read"],
+  "context": {
+    "profile": {"name": "...", "bio": "...", "birth_date": "..."}
+  }
+}</code></pre>
+<ul>
+<li><code>network</code> · 외부 플러그인 API 호출에 필요합니다.</li>
+<li><code>chat.read</code> · 사용자가 명시적으로 허용한 경우 대화 컨텍스트를 전달합니다.</li>
+<li><code>profile.read</code> · 이름·자기소개·생일을 전달합니다.</li>
+<li><code>memory.read</code> · 저장된 메모리를 전달합니다.</li>
+</ul>
+<p class="note">Mirae 서버는 플러그인 URL의 로컬·사설 네트워크 주소를 차단하고 요청 시간과 응답 크기를 제한합니다. 권한을 선택하지 않은 데이터는 플러그인 컨텍스트에 넣지 않습니다.</p>
+</section>
+
+<section class="card">
 <h2>API 호출 순서</h2>
 <ol>
 <li><b>API 키를 발급합니다.</b> Mirae AI의 API 키 페이지에서 키를 한 번 발급합니다.</li>

@@ -26,7 +26,8 @@ function conversationTitle(text){
 }
 
 async function req(path,opt={}){
-  const r=await fetch(API+path,{credentials:"include",...opt,headers:{"Content-Type":"application/json",...(opt.headers||{})}});
+  const isForm=opt.body instanceof FormData;
+  const r=await fetch(API+path,{credentials:"include",...opt,headers:{...(isForm?{}:{"Content-Type":"application/json"}),...(opt.headers||{})}});
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw Error(d.detail||"요청에 실패했습니다.");
   return d;
@@ -44,8 +45,20 @@ function fillSettings(){
   if($("#theme"))$("#theme").value=settings.theme||"light";
   applyTheme();
 }
+async function renderSharedConversation(code){
+  try{
+    const d=await req("/shared/"+code);
+    document.body.innerHTML='<main class="shared-page"><div class="shared-head"><div><b>Mirae AI</b><span>공유된 대화</span></div><a href="/" class="shared-home">Mirae AI 열기</a></div><article class="shared-card"><h1></h1><div class="shared-messages"></div></article></main>';
+    document.querySelector(".shared-card h1").textContent=d.conversation.title||"공유된 대화";
+    const box=document.querySelector(".shared-messages");
+    d.messages.forEach(m=>{const e=document.createElement("div");e.className="shared-message "+m.role;e.innerHTML="<div class='shared-role'>"+(m.role==="user"?"사용자":"Mirae AI")+"</div><div class='shared-content'></div>";e.querySelector(".shared-content").innerHTML=m.role==="assistant"?renderMarkdown(m.content):escapeHtml(m.content).replace(/\n/g,"<br>");box.appendChild(e)});
+    document.title=(d.conversation.title||"공유된 대화")+" · Mirae AI";
+  }catch(e){document.body.innerHTML='<main class="shared-page"><div class="shared-card"><h1>공유 대화를 찾을 수 없습니다.</h1><p>링크가 잘못되었거나 더 이상 존재하지 않습니다.</p><a href="/">Mirae AI로 이동</a></div></main>'}
+}
 async function boot(){
-  fillSettings();renderHistory();newChat(false);
+  const shareMatch=location.pathname.match(/^\/share\/([A-Za-z]{8})\/?$/);
+  if(shareMatch){await renderSharedConversation(shareMatch[1]);return}
+  fillSettings();renderHistory();newChat(false);setupTools();
   try{
     const m=await req("/auth/me");user=m.user;setAccountLabel();
     Promise.all([loadSettings(),loadProfile(),loadHistory()]).then(()=>{fillSettings();setAccountLabel();renderHistory()});
@@ -57,7 +70,7 @@ async function loadHistory(){
   if(!user||historyLoaded)return;
   try{
     const [rows,convs]=await Promise.all([req("/history"),req("/conversations")]);
-    restoreServer(rows,convs);historyLoaded=true;renderHistory();
+    restoreServer(rows,convs);await loadConversationFolders();historyLoaded=true;renderHistory();
   }catch{}
 }
 function setAccountLabel(){
@@ -143,19 +156,36 @@ function renderAttachmentStrip(){
 }
 function formatBytes(n){if(n<1024)return n+" B";if(n<1024*1024)return (n/1024).toFixed(1)+" KB";return (n/1024/1024).toFixed(1)+" MB"}
 async function addFiles(fileList){
-  for(const file of [...fileList]){
-    if(attachments.length>=5){alert("첨부파일은 최대 5개까지 추가할 수 있습니다.");break}
-    if(file.size>10*1024*1024){alert(file.name+"은(는) 10MB를 초과합니다.");continue}
-    if(attachments.some(a=>a.name===file.name&&a.size===file.size))continue;
-    const item={name:file.name,type:file.type||"application/octet-stream",size:file.size,text:"",previewUrl:""};
-    if(file.type.startsWith("image/"))item.previewUrl=URL.createObjectURL(file);
-    else if(file.size<=400000&&(file.type.startsWith("text/")||/\.(txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|yaml|yml|xml|log|ini)$/i.test(file.name))){
-      try{item.text=(await file.text()).slice(0,20000)}catch{}
-    }
+  const files=[...fileList].slice(0,5-attachments.length);
+  const supported=/\.(pdf|docx|xlsx|pptx|zip|txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|yaml|yml|xml|log|ini)$/i;
+  const binary=files.filter(f=>supported.test(f.name)&&!f.type.startsWith("image/"));
+  if(binary.length){
+    const fd=new FormData();binary.forEach(f=>fd.append("files",f));
+    try{
+      $("#globalStatus").textContent="파일 분석 중…";
+      const d=await req("/files/extract",{method:"POST",body:fd});
+      d.files.forEach(x=>attachments.push({name:x.name,type:x.type,size:x.size,text:x.text||"",chunks:x.chunks||[],chunk_count:x.chunk_count||1,previewUrl:""}));
+    }catch(e){alert(e.message)}
+  }
+  for(const file of files.filter(f=>f.type.startsWith("image/"))){
+    const item={name:file.name,type:file.type,size:file.size,text:"",previewUrl:URL.createObjectURL(file),image:true};
     attachments.push(item);
+    runImageOcr(item,file).catch(()=>{});
   }
   renderAttachmentStrip();
   if(attachments.length)$("#globalStatus").textContent=attachments.length+"개 파일 첨부됨";
+}
+async function runImageOcr(item,file){
+  if(!window.Tesseract){
+    const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js";document.head.appendChild(s);
+    await new Promise((res,rej)=>{s.onload=res;s.onerror=rej});
+  }
+  $("#globalStatus").textContent="이미지 OCR 분석 중…";
+  const result=await Tesseract.recognize(file,"kor+eng");
+  item.text=result.data.text||"";
+  item.ocr=true;
+  renderAttachmentStrip();
+  $("#globalStatus").textContent="이미지 OCR 완료";
 }
 function renderMessageAttachments(e,list){
   if(!list?.length)return;
@@ -164,6 +194,48 @@ function renderMessageAttachments(e,list){
   e.querySelector(".wrap").insertBefore(box,e.querySelector(".bubble"));
 }
 
+function openTool(id){$(id).classList.remove("hidden")}
+function closeTool(id){$(id).classList.add("hidden")}
+function setupTools(){
+  $("#canvasButton").onclick=()=>{openTool("#canvasOverlay");$("#canvasEditor").focus()};
+  $("#closeCanvas").onclick=()=>closeTool("#canvasOverlay");
+  $("#markdownButton").onclick=()=>{openTool("#markdownOverlay");$("#markdownEditor").value="";$("#markdownPreview").innerHTML=""};
+  $("#closeMarkdown").onclick=()=>closeTool("#markdownOverlay");
+  $("#markdownEditor").oninput=e=>$("#markdownPreview").innerHTML=renderMarkdown(e.target.value);
+  $("#canvasImprove").onclick=()=>{const v=$("#canvasEditor").value.trim();if(v)ask("다음 문서를 전문적이고 자연스럽게 다듬어줘.\n\n"+v)};
+  $("#canvasSummary").onclick=()=>{const v=$("#canvasEditor").value.trim();if(v)ask("다음 문서를 핵심만 요약해줘.\n\n"+v)};
+  $("#canvasMarkdown").onclick=()=>copyText($("#canvasEditor").value,$("#canvasMarkdown"));
+  $("#codeButton").onclick=()=>openTool("#codeOverlay");$("#closeCode").onclick=()=>closeTool("#codeOverlay");
+  $("#runCode").onclick=runBrowserCode;
+  $("#imageButton").onclick=()=>{const p=prompt("생성할 이미지 설명을 입력하세요.");if(p)ask("이미지를 생성해줘. 프롬프트: "+p)};
+  $("#voiceButton").onclick=toggleVoiceInput;
+}
+async function runBrowserCode(){
+  const lang=$("#codeLanguage").value,src=$("#codeEditor").value,out=$("#codeOutput");out.textContent="실행 중…";
+  if(lang==="javascript"){
+    const code="self.onmessage=function(e){var o=[];var log=function(){o.push(Array.from(arguments).map(String).join(' '))};try{console.log=log;var r=eval(e.data);if(r!==undefined)o.push(String(r));self.postMessage({ok:true,text:o.join('\\n')})}catch(x){self.postMessage({ok:false,text:String(x)})}}";
+    const worker=new Worker(URL.createObjectURL(new Blob([code],{type:"text/javascript"})));
+    worker.onmessage=e=>{out.textContent=e.data.text||"(출력 없음)";worker.terminate()};worker.postMessage(src);setTimeout(()=>{try{worker.terminate();if(out.textContent==="실행 중…")out.textContent="실행 시간이 제한을 초과했습니다."}catch{}},5000);return
+  }
+  out.textContent="Python 런타임을 준비하는 중…";
+  try{
+    if(!window.loadPyodide){const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/pyodide.org/v0.28.2/full/pyodide.js";document.head.appendChild(s);await new Promise((res,rej)=>{s.onload=res;s.onerror=rej})}
+    const py=await loadPyodide({stdout:t=>out.textContent+=(t+"\\n"),stderr:t=>out.textContent+=(t+"\\n")});
+    await py.runPythonAsync(src);if(!out.textContent.trim())out.textContent="(출력 없음)";
+  }catch(e){out.textContent="Python 실행 오류: "+e}
+}
+let recognition=null;
+function toggleVoiceInput(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){alert("이 브라우저에서는 음성 입력을 지원하지 않습니다.");return}
+  if(recognition){recognition.stop();recognition=null;$("#voiceButton").textContent="음성";return}
+  recognition=new SR();recognition.lang="ko-KR";recognition.interimResults=true;recognition.continuous=false;
+  recognition.onstart=()=>$("#voiceButton").textContent="듣는 중…";
+  recognition.onresult=e=>{let s="";for(let i=e.resultIndex;i<e.results.length;i++)s+=e.results[i][0].transcript;$("#input").value=s;$("#input").dispatchEvent(new Event("input"))};
+  recognition.onerror=()=>{recognition=null;$("#voiceButton").textContent="음성"};
+  recognition.onend=()=>{recognition=null;$("#voiceButton").textContent="음성"};
+  recognition.start();
+}
 function renderMarkdown(text){
   const src=normalizeMarkdown(text);const lines=src.split("\n"),out=[];let i=0;
   const esc=v=>escapeHtml(v);const inline=v=>{let s=esc(v),links=[];s=s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,(_,label,url)=>{const i=links.push("<a href=\""+url+"\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">"+label+"</a>")-1;return "\u0000L"+i+"\u0000"});s=s.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>');s=s.replace(/`([^`\n]+)`/g,"<code>$1</code>");s=s.replace(/(\*\*|__)(.+?)\1/g,"<strong>$2</strong>");s=s.replace(/~~(.+?)~~/g,"<del>$1</del>");s=s.replace(/(^|[^\\w])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");s=s.replace(/\u0000L(\d+)\u0000/g,(_,i)=>links[Number(i)]);return s};
@@ -209,6 +281,7 @@ function addMessageActions(e,key,text){
   const actions=document.createElement("div");actions.className="message-actions";
   const copy=document.createElement("button");copy.className="message-action";copy.textContent="복사";copy.onclick=()=>copyText(text,copy);
   const like=document.createElement("button");like.className="message-action feedback";like.dataset.value="like";like.textContent="좋아요";
+  const speak=document.createElement("button");speak.className="message-action";speak.textContent="읽기";speak.onclick=()=>{if("speechSynthesis" in window){speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(text))}};
   const dislike=document.createElement("button");dislike.className="message-action feedback";dislike.dataset.value="dislike";dislike.textContent="싫어요";
   [like,dislike].forEach(btn=>btn.onclick=async()=>{actions.querySelectorAll(".feedback").forEach(x=>x.classList.remove("selected"));btn.classList.add("selected");if(user)try{await req("/feedback",{method:"PUT",body:JSON.stringify({feedback:btn.dataset.value,message_hash:key,conversation_id:currentId})})}catch{}});
   actions.append(copy,like,dislike);wrap.appendChild(actions);
@@ -240,45 +313,68 @@ function finish(box){
 }
 function restoreServer(rows,convs=[]){
   const by={},meta=Object.fromEntries(convs.map(x=>[x.id,x])),legacy=[];
-  for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),messages:[]};
+  for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),favorite:!!c.favorite,folder_id:c.folder_id||null,share_code:c.share_code||"",messages:[]};
   for(const x of rows){
     const id=String(x.conversation_id||"").trim();
     const message={role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""};
     if(id){
-      if(!by[id])by[id]={id,title:conversationTitle(x.conversation_title||"새 대화"),messages:[]};
+      if(!by[id])by[id]={id,title:conversationTitle(x.conversation_title||"새 대화"),favorite:false,folder_id:null,share_code:"",messages:[]};
       by[id].messages.push(message);
     }else legacy.push({...message,created_at:x.created_at});
   }
-  // Legacy records created before conversation_id existed are grouped by user/assistant turns
-  // and assigned to otherwise-empty conversations in chronological order.
   const groups=[];let g=null;
-  for(const m of legacy){
-    if(m.role==="user"||!g){if(g?.messages?.length)groups.push(g);g={messages:[]}}
-    g.messages.push(m);
-  }
+  for(const m of legacy){if(m.role==="user"||!g){if(g?.messages?.length)groups.push(g);g={messages:[]}}g.messages.push(m)}
   if(g?.messages?.length)groups.push(g);
   const empty=Object.values(by).filter(c=>!c.messages.length).sort((x,y)=>new Date(meta[x.id]?.created_at||0)-new Date(meta[y.id]?.created_at||0));
   groups.forEach((group,i)=>{if(empty[i])empty[i].messages=group.messages});
-  chats=Object.values(by).sort((x,y)=>new Date(meta[x.id]?.updated_at||0)-new Date(meta[y.id]?.updated_at||0)).slice(-100);
+  chats=Object.values(by).sort((x,y)=>new Date(meta[y.id]?.updated_at||0)-new Date(meta[x.id]?.updated_at||0)).slice(0,100);
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
   const h=$("#history");h.innerHTML="";
-  [...chats].reverse().forEach(c=>{
+  const q=String($("#conversationSearch")?.value||"").trim().toLowerCase();
+  let list=chats.filter(c=>!q||String(c.title||"").toLowerCase().includes(q)||c.messages.some(m=>String(m.content||"").toLowerCase().includes(q)));
+  const favorites=list.filter(c=>c.favorite);
+  const folders={};list.filter(c=>!c.favorite&&c.folder_id).forEach(c=>(folders[c.folder_id]??=[]).push(c));
+  const loose=list.filter(c=>!c.favorite&&!c.folder_id);
+  const draw=(items,parent)=>items.forEach(c=>{
     const row=document.createElement("div");row.className="history-row";
-    const b=document.createElement("button");b.className="btn history-main";b.textContent=c.title||"새 대화";b.onclick=()=>loadChat(c.id);
-    const menu=document.createElement("button");menu.className="history-menu";menu.type="button";menu.textContent="⋯";menu.title="대화 메뉴";
-    menu.onclick=e=>{e.stopPropagation();openConversationMenu(row,c)};
-    row.append(b,menu);h.appendChild(row);
+    const b=document.createElement("button");b.className="btn history-main";b.textContent=c.title||"새 대화";b.title=c.title||"새 대화";b.onclick=()=>loadChat(c.id);
+    const menu=document.createElement("button");menu.className="history-menu";menu.type="button";menu.textContent="⋯";menu.title="대화 메뉴";menu.onclick=e=>{e.stopPropagation();openConversationMenu(row,c)};
+    row.append(b,menu);parent.appendChild(row);
   });
+  if(favorites.length){const box=document.createElement("div");box.className="history-folder";box.innerHTML="<div class='history-folder-head'>★ 즐겨찾기</div><div class='history-folder-items'></div>";draw(favorites,box.querySelector(".history-folder-items"));h.appendChild(box)}
+  Object.entries(folders).forEach(([id,items])=>{const f=conversationFolders.find(x=>String(x.id)===String(id));if(!f)return;const box=document.createElement("div");box.className="history-folder";box.innerHTML="<div class='history-folder-head'>▾ "+escapeHtml(f.name)+"</div><div class='history-folder-items'></div>";draw(items,box.querySelector(".history-folder-items"));h.appendChild(box)});
+  draw(loose,h);
 }
 function closeConversationMenus(){document.querySelectorAll(".conversation-menu").forEach(x=>x.remove())}
 function openConversationMenu(row,c){
   closeConversationMenus();
   const menu=document.createElement("div");menu.className="conversation-menu";
+  const fav=document.createElement("button");fav.textContent=c.favorite?"★ 즐겨찾기 해제":"☆ 즐겨찾기";fav.onclick=()=>toggleFavorite(c);
+  const share=document.createElement("button");share.textContent="공유 링크";share.onclick=()=>shareConversation(c);
+  const folder=document.createElement("button");folder.textContent="폴더 이동";folder.onclick=()=>moveConversation(c);
   const rename=document.createElement("button");rename.textContent="이름 변경";rename.onclick=()=>renameConversation(c);
   const del=document.createElement("button");del.textContent="삭제";del.className="delete-menu";del.onclick=()=>deleteConversation(c);
-  menu.append(rename,del);row.appendChild(menu);
+  menu.append(fav,share,folder,rename,del);row.appendChild(menu);
+}
+let conversationFolders=[];
+async function loadConversationFolders(){if(!user)return;try{conversationFolders=await req("/conversation-folders")}catch{conversationFolders=[]}}
+async function toggleFavorite(c){try{const d=await req("/conversations/"+encodeURIComponent(c.id)+"/favorite",{method:"PUT",body:JSON.stringify({favorite:!c.favorite})});c.favorite=!!d.favorite;renderHistory();closeConversationMenus()}catch(e){alert(e.message)}}
+async function shareConversation(c){
+  try{const d=await req("/conversations/"+encodeURIComponent(c.id)+"/share",{method:"POST"});c.share_code=d.code;await copyText(d.url,{textContent:"공유 링크"});alert("공유 링크가 생성되었습니다.\n"+d.url)}catch(e){alert(e.message)}
+}
+async function moveConversation(c){
+  if(!conversationFolders.length){alert("먼저 대화 옆의 + 버튼으로 폴더를 만들어주세요.");return}
+  const text=conversationFolders.map(f=>f.id+": "+f.name).join("\n")+"\n0: 폴더에서 빼기";
+  const value=prompt("이동할 폴더 번호를 입력하세요.\n\n"+text,"0");if(value===null)return;
+  const id=Number(value);if(!Number.isInteger(id))return;
+  try{const d=await req("/conversations/"+encodeURIComponent(c.id)+"/folder",{method:"PUT",body:JSON.stringify({folder_id:id===0?null:id})});c.folder_id=d.folder_id;renderHistory();closeConversationMenus()}catch(e){alert(e.message)}
+}
+async function createConversationFolder(){
+  if(!user){openAuth("login");return}
+  const name=prompt("새 폴더 이름");if(name===null||!name.trim())return;
+  try{await req("/conversation-folders",{method:"POST",body:JSON.stringify({name:name.trim()})});await loadConversationFolders();renderHistory()}catch(e){alert(e.message)}
 }
 async function renameConversation(c){
   const title=prompt("새 대화 이름",c.title||"새 대화");if(title===null)return;
@@ -423,13 +519,48 @@ function selectPage(page){
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("hidden",p.id!=="page-"+page));
   const b=document.querySelector('.nav-btn[data-page="'+page+'"]');$("#settingTitle").textContent=b?b.textContent:"설정";$("#settingEyebrow").textContent=(b?b.textContent:"설정").toUpperCase();
-  if(page==="skills")loadSkills();if(page==="memory")loadMemories();
+  if(page==="skills")loadSkills();if(page==="plugins")loadPlugins();if(page==="memory")loadMemories();if(page==="developer"){loadApiUsage();loadWebhooks();}
 }
 document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>selectPage(b.dataset.page));
 $("#closeSettings").onclick=()=>$("#settingsOverlay").classList.add("hidden");
 $("#settingsMenu").onclick=()=>openSettings("general");
-$("#developerApiKeys").onclick=()=>location.href="/api-keys.html";
-$("#developerApiDocs").onclick=()=>location.href="/api-docs.html";
+$("#developerApiKeys").onclick=()=>location.href="/api-keys";
+$("#developerApiDocs").onclick=()=>location.href="/api-docs";
+
+const paletteCommands=[
+  ["새 대화","새 대화를 시작합니다.",()=>newChat()],
+  ["대화 검색","왼쪽 대화 검색창으로 이동합니다.",()=>$("#conversationSearch").focus()],
+  ["설정 열기","Mirae 설정을 엽니다.",()=>openSettings("general")],
+  ["Canvas 열기","AI Canvas를 엽니다.",()=>{openTool("#canvasOverlay");$("#canvasEditor").focus()}],
+  ["Markdown 편집기","Markdown 편집기를 엽니다.",()=>openTool("#markdownOverlay")],
+  ["코드 실행","코드 실행 샌드박스를 엽니다.",()=>openTool("#codeOverlay")],
+  ["파일 첨부","파일 선택 창을 엽니다.",()=>$("#fileInput").click()],
+  ["음성 입력","브라우저 음성 입력을 시작합니다.",()=>toggleVoiceInput()],
+  ["API 문서","Mirae API 문서를 엽니다.",()=>location.href="/api-docs"],
+  ["개발자 설정","API/Webhook/플러그인 관리 화면을 엽니다.",()=>openSettings("developer")],
+  ["플러그인 관리","Mirae 플러그인 화면을 엽니다.",()=>openSettings("plugins")]
+];
+let paletteIndex=0;
+function renderCommandPalette(filter=""){
+  const box=$("#commandList"),q=filter.trim().toLowerCase();
+  const list=paletteCommands.filter(x=>(x[0]+" "+x[1]).toLowerCase().includes(q));
+  paletteIndex=Math.min(paletteIndex,Math.max(0,list.length-1));box.innerHTML="";
+  list.forEach((x,i)=>{const e=document.createElement("button");e.className="command-item"+(i===paletteIndex?" active":"");e.innerHTML="<b>"+escapeHtml(x[0])+"</b><small>"+escapeHtml(x[1])+"</small>";e.onclick=()=>{closeCommandPalette();x[2]()};box.appendChild(e)});
+}
+function openCommandPalette(){if($("#commandPalette").classList.contains("hidden")){$("#commandPalette").classList.remove("hidden");$("#commandSearch").value="";paletteIndex=0;renderCommandPalette();setTimeout(()=>$("#commandSearch").focus(),0)}else closeCommandPalette()}
+function closeCommandPalette(){$("#commandPalette").classList.add("hidden")}
+$("#closeCommandPalette").onclick=closeCommandPalette;
+$("#commandPalette").onclick=e=>{if(e.target.id==="commandPalette")closeCommandPalette()};
+$("#commandSearch").oninput=e=>{paletteIndex=0;renderCommandPalette(e.target.value)};
+$("#commandSearch").onkeydown=e=>{const q=e.target.value.trim().toLowerCase();const list=paletteCommands.filter(x=>(x[0]+" "+x[1]).toLowerCase().includes(q));if(e.key==="ArrowDown"){e.preventDefault();paletteIndex=(paletteIndex+1)%Math.max(1,list.length);renderCommandPalette(e.target.value)}else if(e.key==="ArrowUp"){e.preventDefault();paletteIndex=(paletteIndex-1+Math.max(1,list.length))%Math.max(1,list.length);renderCommandPalette(e.target.value)}else if(e.key==="Enter"&&list[paletteIndex]){e.preventDefault();closeCommandPalette();list[paletteIndex][2]()}else if(e.key==="Escape"){e.preventDefault();closeCommandPalette()}};
+document.addEventListener("keydown",e=>{
+  const mod=e.ctrlKey||e.metaKey;
+  if(mod&&e.key.toLowerCase()==="k"){e.preventDefault();openCommandPalette();return}
+  if(mod&&e.key.toLowerCase()==="n"){e.preventDefault();newChat();return}
+  if(mod&&e.key.toLowerCase()==="l"&&document.activeElement!==$("#input")){e.preventDefault();$("#input").focus();return}
+  if(mod&&e.shiftKey&&e.key.toLowerCase()==="o"){e.preventDefault();$("#fileInput").click();return}
+  if(e.key==="Escape"&&!$("#commandPalette").classList.contains("hidden"))closeCommandPalette();
+});
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
   try{
@@ -480,6 +611,48 @@ async function loadSkills(){
     });
   }catch(e){box.innerHTML="<div class='muted'>"+escapeHtml(e.message)+"</div>"}
 }
+async function loadPlugins(){
+  if(!user)return;const box=$("#pluginList");box.innerHTML="<div class='muted'>플러그인 불러오는 중…</div>";
+  try{
+    const list=await req("/plugins");box.innerHTML="";
+    if(!list.length){box.innerHTML="<div class='muted'>등록된 플러그인이 없습니다.</div>";return}
+    list.forEach(p=>{
+      const card=document.createElement("div");card.className="plugin-card";
+      card.innerHTML="<div class='row'><div><b>"+escapeHtml(p.name)+"</b><small>"+escapeHtml(p.description||"설명 없음")+"</small></div><span class='muted'>"+(p.active?"활성":"비활성")+"</span></div><div class='url'>"+escapeHtml(p.url)+"</div><div class='plugin-permissions'>"+(p.permissions||[]).map(x=>"<span>"+escapeHtml(x)+"</span>").join("")+"</div><div class='skill-actions'><button class='outline invoke'>테스트 호출</button><button class='outline toggle'>"+(p.active?"비활성화":"활성화")+"</button><button class='danger del'>삭제</button></div>";
+      card.querySelector(".invoke").onclick=async()=>{const raw=prompt("플러그인 입력 JSON","{}");if(raw===null)return;try{const r=await req("/plugins/"+p.id+"/invoke",{method:"POST",body:JSON.stringify({input:JSON.parse(raw)})});alert(JSON.stringify(r,null,2).slice(0,6000))}catch(e){alert(e.message)}};
+      card.querySelector(".toggle").onclick=async()=>{try{await req("/plugins/"+p.id,{method:"PUT",body:JSON.stringify({active:!p.active})});loadPlugins()}catch(e){alert(e.message)}};
+      card.querySelector(".del").onclick=async()=>{if(confirm("이 플러그인을 삭제할까요?")){await req("/plugins/"+p.id,{method:"DELETE"});loadPlugins()}};
+      box.appendChild(card);
+    });
+  }catch(e){box.innerHTML="<div class='muted'>"+escapeHtml(e.message)+"</div>"}
+}
+$("#pluginForm").onsubmit=async e=>{
+  e.preventDefault();
+  const permissions=[...document.querySelectorAll("input[name=pluginPermission]:checked")].map(x=>x.value);
+  try{await req("/plugins",{method:"POST",body:JSON.stringify({name:$("#pluginName").value,description:$("#pluginDescription").value,url:$("#pluginUrl").value,method:$("#pluginMethod").value,permissions})});e.target.reset();$("#globalStatus").textContent="플러그인이 등록되었습니다. 선택한 권한만 허용됩니다.";loadPlugins()}catch(err){alert(err.message)}
+};
+
+async function loadApiUsage(){
+  try{
+    const d=await req("/api-usage"),s=d.summary||{};
+    $("#apiUsageSummary").textContent="요청 "+(s.requests||0)+"회 · 평균 "+(s.avg_latency_ms||0)+"ms · 토큰 "+((s.prompt_tokens||0)+(s.completion_tokens||0));
+    $("#apiUsageDaily").innerHTML=(d.daily||[]).slice(0,14).map(x=>"<div><span>"+new Date(x.day).toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"})+"</span><b>"+x.requests+"회</b><small>"+x.tokens+" tokens</small></div>").join("")||"<small>최근 사용량이 없습니다.</small>";
+    $("#apiLogList").innerHTML=(d.logs||[]).slice(0,30).map(x=>"<div class='api-log'><b>"+escapeHtml(x.path)+"</b><span>"+x.status+" · "+x.latency_ms+"ms</span><small>"+new Date(x.created_at).toLocaleString("ko-KR")+"</small></div>").join("")||"<small>호출 로그가 없습니다.</small>";
+  }catch(e){if($("#apiUsageSummary"))$("#apiUsageSummary").textContent=e.message}
+}
+async function loadWebhooks(){
+  try{
+    const list=await req("/webhooks"),box=$("#webhookList");box.innerHTML="";
+    if(!list.length){box.innerHTML="<small>등록된 Webhook이 없습니다.</small>";return}
+    list.forEach(w=>{const el=document.createElement("div");el.className="webhook-row";el.innerHTML="<div><b>"+escapeHtml(w.name)+"</b><small>"+escapeHtml(w.url)+"</small></div><div class='row'><button class='outline toggle'>"+(w.active?"활성":"비활성")+"</button><button class='danger del'>삭제</button></div>";el.querySelector(".toggle").onclick=async()=>{await req("/webhooks/"+w.id,{method:"PUT",body:JSON.stringify({active:!w.active})});loadWebhooks()};el.querySelector(".del").onclick=async()=>{if(confirm("이 Webhook을 삭제할까요?")){await req("/webhooks/"+w.id,{method:"DELETE"});loadWebhooks()}};box.appendChild(el)})
+  }catch(e){$("#webhookList").textContent=e.message}
+}
+$("#createWebhook").onclick=async()=>{
+  const name=prompt("Webhook 이름");if(!name)return;
+  const url=prompt("Webhook URL (https:// 또는 http://)");
+  if(!url)return;
+  try{await req("/webhooks",{method:"POST",body:JSON.stringify({name,url,events:["api.request"]})});loadWebhooks()}catch(e){alert(e.message)}
+}
 async function loadApiKeys(){
   if(!user)return;
   const box=$("#apiKeyList");if(!box)return;
@@ -522,6 +695,8 @@ $("#form").onsubmit=e=>{e.preventDefault();ask($("#input").value)};
 $("#input").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(e.target.value)}};
 $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,160)+"px"};
 $("#newChat").onclick=()=>newChat();$("#mobileNew").onclick=()=>newChat();$("#mobileMenu").onclick=()=>$("#sidebar").classList.toggle("open");
+$("#newFolder").onclick=createConversationFolder;
+$("#conversationSearch").oninput=()=>renderHistory();
 function closeSidebar(){$("#sidebar").classList.remove("open")}
 $("#chat").onclick=closeSidebar;
 const mq=matchMedia("(prefers-color-scheme:dark)");if(mq.addEventListener)mq.addEventListener("change",()=>{if(settings.theme==="system")applyTheme()});

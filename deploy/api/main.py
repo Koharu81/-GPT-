@@ -4,12 +4,15 @@ from typing import Any
 from datetime import datetime, timedelta, timezone, date
 from urllib.parse import urlparse
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Response, Request
+from fastapi import FastAPI, Header, HTTPException, Response, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field, HttpUrl
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from io import BytesIO
+import zipfile
 
 APP_VERSION="6.2.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
@@ -86,8 +89,19 @@ class SkillCreate(BaseModel):
     headers:str=Field("",max_length=8000); body:str=Field("",max_length=20000)
 class SkillRun(BaseModel): params:dict[str,Any]=Field(default_factory=dict)
 class ConversationRename(BaseModel): title:str=Field(min_length=1,max_length=120)
+class ConversationFolder(BaseModel): name:str=Field(min_length=1,max_length=60)
+class ConversationFolderAssign(BaseModel): folder_id:int|None=None
+class ConversationFavorite(BaseModel): favorite:bool
+class WebhookCreate(BaseModel): name:str=Field(min_length=1,max_length=80); url:str; events:list[str]=Field(default_factory=lambda:["api.request"])
+class WebhookState(BaseModel): active:bool
 class MemoryCreate(BaseModel): content:str=Field(min_length=1,max_length=1000)
 class SkillPromptCreate(BaseModel): prompt:str=Field(min_length=10,max_length=4000)
+class PluginCreate(BaseModel):
+    name:str=Field(min_length=1,max_length=80); description:str=Field("",max_length=500)
+    url:HttpUrl; method:str=Field("POST",pattern=r"^(GET|POST)$")
+    permissions:list[str]=Field(default_factory=list,max_length=8)
+class PluginState(BaseModel): active:bool
+class PluginInvoke(BaseModel): input:dict[str,Any]=Field(default_factory=dict)
 
 def lang(t:str):
     ko=len(re.findall(r"[가-힣]",t));ja=len(re.findall(r"[ぁ-ゖァ-ヺ]",t))
@@ -165,10 +179,14 @@ def make_conversation_title(message):
     return text[:60].rstrip() or "새 대화"
 
 async def generate_title(message):
-    text=re.sub(r"\s+"," ",str(message or "")).strip()
-    text=re.sub(r"(?:해줘|해주세요|해 주세요|알려줘|알려주세요|설명해줘|설명해주세요)[.!?]*$","",text).strip()
-    text=re.sub(r"^#+\s*","",text)
-    return (text[:32].rstrip()+("…" if len(text)>32 else "")) or "새 대화"
+    text=re.sub(r"```[\s\S]*?```"," ",str(message or ""))
+    text=re.sub(r"\s+"," ",text).strip()
+    text=re.sub(r"^(질문|요청|문의|제목)\s*[:：-]\s*","",text,flags=re.I)
+    text=re.sub(r"(?:해줘|해주세요|해 주세요|알려줘|알려주세요|설명해줘|설명해주세요|부탁해)[.!?~]*$","",text).strip()
+    text=re.sub(r"^[\[\(【].*?[\]\)】]\s*","",text)
+    text=re.sub(r"\s+"," ",text).strip(" .!?~")
+    if not text:return "새 대화"
+    return text[:32].rstrip()+("…" if len(text)>32 else "")
 
 def save_chat(uid,msg,reply,mode,sources,cid="",attachments=None):
     cid=ensure_conversation(uid,cid)
@@ -218,6 +236,14 @@ def init_db():
             headers TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',active BOOLEAN NOT NULL DEFAULT true,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(user_id,name))""")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_skills_user_idx ON mirae_skills(user_id)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_plugins(
+            id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',url TEXT NOT NULL,
+            method TEXT NOT NULL DEFAULT 'POST',permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            active BOOLEAN NOT NULL DEFAULT true,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(user_id,name)
+        )""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_plugins_user_idx ON mirae_plugins(user_id)")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_conversations(
             id TEXT PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
@@ -225,6 +251,18 @@ def init_db():
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )""")
+        c.execute("ALTER TABLE mirae_conversations ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT false")
+        c.execute("ALTER TABLE mirae_conversations ADD COLUMN IF NOT EXISTS folder_id BIGINT")
+        c.execute("ALTER TABLE mirae_conversations ADD COLUMN IF NOT EXISTS share_code TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS mirae_conversations_share_idx ON mirae_conversations(share_code) WHERE share_code IS NOT NULL")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_conversation_folders(
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE(user_id,name)
+        )""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_conversation_folders_user_idx ON mirae_conversation_folders(user_id)")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_conversations_user_idx ON mirae_conversations(user_id,updated_at DESC)")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_memories(
             id BIGSERIAL PRIMARY KEY,
@@ -234,6 +272,18 @@ def init_db():
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )""")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_memories_user_idx ON mirae_memories(user_id,updated_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_api_usage(
+            id BIGSERIAL PRIMARY KEY,key_id BIGINT REFERENCES mirae_api_keys(id) ON DELETE SET NULL,
+            user_id BIGINT REFERENCES mirae_users(id) ON DELETE CASCADE,path TEXT NOT NULL,
+            status INTEGER NOT NULL DEFAULT 200,latency_ms INTEGER NOT NULL DEFAULT 0,
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,completion_tokens INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_api_usage_user_idx ON mirae_api_usage(user_id,created_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_webhooks(
+            id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,url TEXT NOT NULL,events JSONB NOT NULL DEFAULT '["api.request"]'::jsonb,
+            active BOOLEAN NOT NULL DEFAULT true,created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_webhooks_user_idx ON mirae_webhooks(user_id)")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_feedback(
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
@@ -244,6 +294,61 @@ def init_db():
             UNIQUE(user_id,message_hash)
         )""")
         c.commit()
+
+
+def extract_file_text(name,data):
+    ext=os.path.splitext(name.lower())[1]
+    try:
+        if ext==".pdf":
+            from pypdf import PdfReader
+            r=PdfReader(BytesIO(data));return "\n".join((p.extract_text() or "") for p in r.pages)
+        if ext==".docx":
+            from docx import Document
+            d=Document(BytesIO(data));return "\n".join(x.text for x in d.paragraphs)
+        if ext==".xlsx":
+            from openpyxl import load_workbook
+            wb=load_workbook(BytesIO(data),read_only=True,data_only=True);parts=[]
+            for ws in wb.worksheets:
+                parts.append("[Sheet: "+ws.title+"]")
+                for row in ws.iter_rows(values_only=True):
+                    parts.append(" | ".join("" if v is None else str(v) for v in row))
+            return "\n".join(parts)
+        if ext==".pptx":
+            from pptx import Presentation
+            prs=Presentation(BytesIO(data));parts=[]
+            for i,slide in enumerate(prs.slides,1):
+                parts.append("[Slide "+str(i)+"]")
+                for shape in slide.shapes:
+                    if hasattr(shape,"text"):parts.append(shape.text)
+            return "\n".join(parts)
+        if ext==".zip":
+            parts=[]
+            with zipfile.ZipFile(BytesIO(data)) as z:
+                for n in z.namelist():
+                    if n.endswith("/") or len(parts)>=200:continue
+                    parts.append("[FILE] "+n)
+                    if z.getinfo(n).file_size<=500_000 and re.search(r"\.(txt|md|json|csv|py|js|ts|tsx|jsx|html|css|sql|yaml|yml|xml|toml|ini|log)$",n,re.I):
+                        try:parts.append(z.read(n).decode("utf-8","ignore")[:20000])
+                        except:pass
+            return "\n".join(parts)
+        if ext in {".txt",".md",".csv",".json",".py",".js",".ts",".tsx",".jsx",".html",".css",".sql",".yaml",".yml",".xml",".toml",".ini",".log"}:
+            return data.decode("utf-8","ignore")
+    except Exception as e:
+        return "[파일 텍스트 추출 실패: "+str(e)[:200]+"]"
+    return ""
+
+@app.post("/files/extract")
+async def extract_files(files:list[UploadFile]=File(...)):
+    if len(files)>20:raise HTTPException(400,"한 번에 최대 20개 파일까지 처리할 수 있습니다.")
+    out=[]
+    for f in files:
+        data=await f.read()
+        if len(data)>100*1024*1024:raise HTTPException(413,f"{f.filename} 파일이 100MB를 초과합니다.")
+        text=extract_file_text(f.filename or "file",data)
+        # 대용량 파일은 청크 단위로 잘라 모델 컨텍스트를 보호합니다.
+        chunks=[text[i:i+16000] for i in range(0,len(text),16000)] or [""]
+        out.append({"name":f.filename or "file","type":f.content_type or "application/octet-stream","size":len(data),"text":text[:200000],"chunks":chunks[:100],"chunk_count":len(chunks),"truncated":len(text)>200000})
+    return {"files":out}
 
 @app.on_event("startup")
 async def startup():
@@ -382,7 +487,7 @@ async def conversations(request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
     with db() as c:
-        rows=c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE user_id=%s ORDER BY updated_at DESC LIMIT 100",[u["id"]]).fetchall()
+        rows=c.execute("SELECT id,title,created_at,updated_at,favorite,folder_id,share_code FROM mirae_conversations WHERE user_id=%s ORDER BY favorite DESC,updated_at DESC LIMIT 100",[u["id"]]).fetchall()
         for row in rows:
             if row["title"]=="새 대화":
                 first=c.execute("SELECT content FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s ORDER BY created_at ASC,id ASC LIMIT 1",[u["id"],row["id"]]).fetchone()
@@ -391,6 +496,95 @@ async def conversations(request:Request):
                     c.execute("UPDATE mirae_conversations SET title=%s WHERE id=%s AND user_id=%s",[title,row["id"],u["id"]]);row["title"]=title
         c.commit()
     return rows
+
+@app.get("/conversations/search")
+async def search_conversations(q:str="",request:Request=None):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    query=re.sub(r"\s+"," ",str(q or "")).strip()[:120]
+    if not query:return await conversations(request)
+    like="%"+query.replace("%","\\%").replace("_","\\_")+"%"
+    with db() as c:
+        rows=c.execute("""SELECT id,title,created_at,updated_at,favorite,folder_id,share_code
+                          FROM mirae_conversations
+                          WHERE user_id=%s AND (title ILIKE %s ESCAPE '\' OR id IN
+                            (SELECT conversation_id FROM mirae_chat_history WHERE user_id=%s AND content ILIKE %s ESCAPE '\'))
+                          ORDER BY favorite DESC,updated_at DESC LIMIT 100""",[u["id"],like,u["id"],like]).fetchall()
+    return rows
+
+@app.get("/conversation-folders")
+async def list_conversation_folders(request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:return c.execute("SELECT id,name,created_at FROM mirae_conversation_folders WHERE user_id=%s ORDER BY name ASC",[u["id"]]).fetchall()
+
+@app.post("/conversation-folders")
+async def create_conversation_folder(data:ConversationFolder,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    name=re.sub(r"\s+"," ",data.name.strip())[:60]
+    with db() as c:
+        try:r=c.execute("INSERT INTO mirae_conversation_folders(user_id,name) VALUES (%s,%s) RETURNING id,name",[u["id"],name]).fetchone()
+        except psycopg.errors.UniqueViolation:raise HTTPException(409,"같은 이름의 폴더가 이미 있습니다.")
+        c.commit()
+    return r
+
+@app.delete("/conversation-folders/{folder_id}")
+async def delete_conversation_folder(folder_id:int,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        c.execute("UPDATE mirae_conversations SET folder_id=NULL WHERE user_id=%s AND folder_id=%s",[u["id"],folder_id])
+        r=c.execute("DELETE FROM mirae_conversation_folders WHERE id=%s AND user_id=%s RETURNING id",[folder_id,u["id"]]).fetchone();c.commit()
+    return {"ok":True,"deleted":bool(r)}
+
+@app.put("/conversations/{conversation_id}/favorite")
+async def favorite_conversation(conversation_id:str,data:ConversationFavorite,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("UPDATE mirae_conversations SET favorite=%s,updated_at=now() WHERE id=%s AND user_id=%s RETURNING id,favorite",[data.favorite,conversation_id,u["id"]]).fetchone()
+        if not r:raise HTTPException(404,"대화를 찾을 수 없습니다.")
+        c.commit()
+    return r
+
+@app.put("/conversations/{conversation_id}/folder")
+async def assign_conversation_folder(conversation_id:str,data:ConversationFolderAssign,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        if data.folder_id is not None:
+            ok=c.execute("SELECT id FROM mirae_conversation_folders WHERE id=%s AND user_id=%s",[data.folder_id,u["id"]]).fetchone()
+            if not ok:raise HTTPException(404,"폴더를 찾을 수 없습니다.")
+        r=c.execute("UPDATE mirae_conversations SET folder_id=%s,updated_at=now() WHERE id=%s AND user_id=%s RETURNING id,folder_id",[data.folder_id,conversation_id,u["id"]]).fetchone()
+        if not r:raise HTTPException(404,"대화를 찾을 수 없습니다.")
+        c.commit()
+    return r
+
+@app.post("/conversations/{conversation_id}/share")
+async def share_conversation(conversation_id:str,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        row=c.execute("SELECT id,share_code FROM mirae_conversations WHERE id=%s AND user_id=%s",[conversation_id,u["id"]]).fetchone()
+        if not row:raise HTTPException(404,"대화를 찾을 수 없습니다.")
+        code=row["share_code"]
+        if not code:
+            alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            while True:
+                code="".join(secrets.choice(alphabet) for _ in range(8))
+                if not c.execute("SELECT 1 FROM mirae_conversations WHERE share_code=%s",[code]).fetchone():break
+            c.execute("UPDATE mirae_conversations SET share_code=%s WHERE id=%s AND user_id=%s",[code,conversation_id,u["id"]]);c.commit()
+    return {"ok":True,"code":code,"url":"https://mirae.koharu.live/share/"+code}
+
+@app.get("/shared/{share_code}")
+async def get_shared_conversation(share_code:str):
+    if not re.fullmatch(r"[A-Za-z]{8}",share_code):raise HTTPException(404,"공유 대화를 찾을 수 없습니다.")
+    with db() as c:
+        conv=c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE share_code=%s",[share_code]).fetchone()
+        if not conv:raise HTTPException(404,"공유 대화를 찾을 수 없습니다.")
+        messages=c.execute("SELECT role,content,created_at,attachments FROM mirae_chat_history WHERE conversation_id=%s ORDER BY created_at ASC,id ASC",[conv["id"]]).fetchall()
+    return {"conversation":conv,"messages":messages}
 
 @app.put("/conversations/{conversation_id}")
 async def rename_conversation(conversation_id:str,data:ConversationRename,request:Request):
@@ -550,6 +744,101 @@ async def skill_run(skill_id:int,data:SkillRun,request:Request):
     except Exception as e:raise HTTPException(502,f"스킬 요청에 실패했습니다: {str(e)[:300]}")
     return {"skill":s["name"],"result":r}
 
+PLUGIN_PERMISSIONS={"network","chat.read","profile.read","memory.read"}
+def validate_plugin_permissions(items):
+    clean=[]
+    for x in items:
+        if x not in PLUGIN_PERMISSIONS:raise HTTPException(400,f"지원하지 않는 플러그인 권한입니다: {x}")
+        if x not in clean:clean.append(x)
+    if "network" not in clean:raise HTTPException(400,"플러그인을 호출하려면 외부 네트워크 권한(network)을 허용해야 합니다.")
+    return clean
+
+async def invoke_plugin(plugin,user,request,input_data):
+    permissions=validate_plugin_permissions(plugin["permissions"] or [])
+    url=str(plugin["url"]);valid_url(url)
+    payload={"input":input_data,"plugin":{"name":plugin["name"],"version":1},"permissions":permissions}
+    if "chat.read" in permissions:
+        payload["context"]={"history":[{"role":m["role"],"content":m["content"]} for m in input_data.get("_history",[]) if isinstance(m,dict) and m.get("role") in {"user","assistant"}][-12:]}
+    else:payload["context"]={}
+    if "profile.read" in permissions:
+        with db() as c:
+            p=c.execute("SELECT name,bio,birth_date FROM mirae_users WHERE id=%s",[user["id"]]).fetchone()
+        payload["context"]["profile"]=dict(p or {})
+    if "memory.read" in permissions:
+        with db() as c:
+            mm=c.execute("SELECT content FROM mirae_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 20",[user["id"]]).fetchall()
+        payload["context"]["memories"]=[x["content"] for x in mm]
+    payload["input"].pop("_history",None)
+    headers={"Content-Type":"application/json","X-Mirae-Plugin":plugin["name"]}
+    async with httpx.AsyncClient(timeout=15,follow_redirects=False,trust_env=False) as x:
+        if plugin["method"]=="GET":
+            r=await x.get(url,params=payload["input"],headers={"X-Mirae-Plugin":plugin["name"]})
+        else:
+            r=await x.post(url,json=payload,headers=headers)
+    return {"status":r.status_code,"headers":{k:v for k,v in r.headers.items() if k.lower() in {"content-type","location"}}, "body":r.text[:12000]}
+
+@app.get("/plugins")
+async def plugins(request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:return c.execute("SELECT id,name,description,url,method,permissions,active,created_at,updated_at FROM mirae_plugins WHERE user_id=%s ORDER BY created_at DESC",[u["id"]]).fetchall()
+
+@app.post("/plugins")
+async def plugin_create(data:PluginCreate,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    perms=validate_plugin_permissions(data.permissions)
+    valid_url(str(data.url))
+    with db() as c:
+        try:
+            r=c.execute("INSERT INTO mirae_plugins(user_id,name,description,url,method,permissions) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id,name,description,url,method,permissions,active,created_at,updated_at",
+                        [u["id"],data.name.strip(),data.description.strip(),str(data.url),data.method,Jsonb(perms)]).fetchone()
+            c.commit()
+        except psycopg.errors.UniqueViolation:
+            c.rollback();raise HTTPException(409,"같은 이름의 플러그인이 이미 있습니다.")
+    return r
+
+@app.put("/plugins/{plugin_id}")
+async def plugin_update(plugin_id:int,data:PluginState,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("UPDATE mirae_plugins SET active=%s,updated_at=now() WHERE id=%s AND user_id=%s RETURNING id,active",[data.active,plugin_id,u["id"]]).fetchone()
+        if not r:raise HTTPException(404,"플러그인을 찾을 수 없습니다.")
+        c.commit()
+    return r
+
+@app.delete("/plugins/{plugin_id}")
+async def plugin_delete(plugin_id:int,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("DELETE FROM mirae_plugins WHERE id=%s AND user_id=%s RETURNING id",[plugin_id,u["id"]]).fetchone();c.commit()
+    return {"ok":True,"deleted":bool(r)}
+
+@app.post("/plugins/{plugin_id}/invoke")
+async def plugin_invoke(plugin_id:int,data:PluginInvoke,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:p=c.execute("SELECT * FROM mirae_plugins WHERE id=%s AND user_id=%s AND active=true",[plugin_id,u["id"]]).fetchone()
+    if not p:raise HTTPException(404,"활성화된 플러그인을 찾을 수 없습니다.")
+    try:r=await invoke_plugin(p,u,request,data.input)
+    except HTTPException:raise
+    except Exception as e:raise HTTPException(502,f"플러그인 요청에 실패했습니다: {type(e).__name__}: {str(e)[:300]}")
+    return {"plugin":p["name"],"permissions":p["permissions"],"result":r}
+
+async def run_plugin_command(message,request):
+    m=re.match(r"^\s*/plugin\s+([^\s]+)(?:\s+(\{.*\}))?\s*$",message,re.S|re.I)
+    if not m:return None
+    u=session_user(request)
+    if not u:raise HTTPException(401,"플러그인을 사용하려면 로그인해주세요.")
+    try:pdata=json.loads(m.group(2) or "{}")
+    except Exception:raise HTTPException(400,'플러그인 파라미터는 JSON이어야 합니다.')
+    with db() as c:p=c.execute("SELECT * FROM mirae_plugins WHERE user_id=%s AND lower(name)=lower(%s) AND active=true",[u["id"],m.group(1)]).fetchone()
+    if not p:raise HTTPException(404,f"'{m.group(1)}' 플러그인을 찾을 수 없습니다.")
+    r=await invoke_plugin(p,u,request,pdata)
+    return p,r
+
 async def run_skill_command(message,request):
     m=re.match(r"^\s*/skill\s+([^\s]+)(?:\s+(\{.*\}))?\s*$",message,re.S|re.I)
     if not m:return None
@@ -618,6 +907,14 @@ async def prepare(req,request):
 
 @app.post("/chat")
 async def chat(req:ChatRequest,request:Request):
+    plugin=await run_plugin_command(req.message,request)
+    if plugin:
+        p,r=plugin;reply=f"[플러그인: {p['name']}]\nHTTP {r['status']}\n\n{r['body']}"
+        u=session_user(request);cid=""
+        if u:
+            cid=save_chat(u["id"],req.message,reply,"plugin",[{"type":"plugin","name":p["name"]}],req.conversation_id or "")
+            if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
+        return {"reply":reply,"model":"plugin","language":lang(req.message),"sources":[],"conversation_id":cid}
     sk=await run_skill_command(req.message,request);u=session_user(request)
     if sk:
         s,r=sk;reply=f"[스킬: {s['name']}]\nHTTP {r['status']}\n\n{r['body']}"
@@ -677,6 +974,63 @@ async def chat_stream(req:ChatRequest,request:Request):
         except Exception as e:yield event("error",{"message":str(e)[:500]})
     return StreamingResponse(gen(),media_type="text/event-stream",headers={"Cache-Control":"no-cache, no-transform","X-Accel-Buffering":"no","Connection":"keep-alive"})
 
+@app.get("/api-usage")
+async def api_usage(request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        summary=c.execute("""SELECT COUNT(*)::int AS requests,COALESCE(SUM(prompt_tokens),0)::int AS prompt_tokens,
+            COALESCE(SUM(completion_tokens),0)::int AS completion_tokens,COALESCE(AVG(latency_ms),0)::int AS avg_latency_ms
+            FROM mirae_api_usage WHERE user_id=%s""",[u["id"]]).fetchone()
+        daily=c.execute("""SELECT date_trunc('day',created_at) AS day,COUNT(*)::int AS requests,
+            COALESCE(SUM(prompt_tokens+completion_tokens),0)::int AS tokens
+            FROM mirae_api_usage WHERE user_id=%s AND created_at>=now()-interval '30 days'
+            GROUP BY 1 ORDER BY 1 DESC""",[u["id"]]).fetchall()
+        logs=c.execute("""SELECT path,status,latency_ms,prompt_tokens,completion_tokens,created_at
+            FROM mirae_api_usage WHERE user_id=%s ORDER BY created_at DESC LIMIT 100""",[u["id"]]).fetchall()
+    return {"summary":summary,"daily":daily,"logs":logs}
+
+@app.get("/webhooks")
+async def list_webhooks(request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:return c.execute("SELECT id,name,url,events,active,created_at FROM mirae_webhooks WHERE user_id=%s ORDER BY created_at DESC",[u["id"]]).fetchall()
+
+@app.post("/webhooks")
+async def create_webhook(data:WebhookCreate,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    if not data.url.startswith(("https://","http://")):raise HTTPException(400,"Webhook URL은 http 또는 https여야 합니다.")
+    with db() as c:
+        r=c.execute("INSERT INTO mirae_webhooks(user_id,name,url,events) VALUES (%s,%s,%s,%s) RETURNING id,name,url,events,active",[u["id"],data.name,data.url,json.dumps(data.events)]).fetchone();c.commit()
+    return r
+
+@app.put("/webhooks/{webhook_id}")
+async def set_webhook(webhook_id:int,data:WebhookState,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("UPDATE mirae_webhooks SET active=%s WHERE id=%s AND user_id=%s RETURNING id,active",[data.active,webhook_id,u["id"]]).fetchone();c.commit()
+    if not r:raise HTTPException(404,"Webhook을 찾을 수 없습니다.")
+    return r
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id:int,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        r=c.execute("DELETE FROM mirae_webhooks WHERE id=%s AND user_id=%s RETURNING id",[webhook_id,u["id"]]).fetchone();c.commit()
+    return {"ok":bool(r)}
+
+async def dispatch_webhook(user_id,event,payload):
+    try:
+        with db() as c: hooks=c.execute("SELECT url FROM mirae_webhooks WHERE user_id=%s AND active=true AND events ? %s",[user_id,event]).fetchall()
+        async with httpx.AsyncClient(timeout=5) as x:
+            for h in hooks:
+                try: await x.post(h["url"],json={"event":event,"created":int(time.time()),"data":payload})
+                except Exception: pass
+    except Exception: pass
+
 @app.get("/api-keys")
 async def list_keys(request:Request):
     u=session_user(request)
@@ -700,6 +1054,7 @@ async def revoke_key(key_id:int,request:Request):
 
 @app.post("/v1/chat/completions")
 async def openai_chat(req:dict[str,Any],request:Request,authorization:str|None=Header(default=None)):
+    started=time.perf_counter()
     key=authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
     with db() as c:k=c.execute("SELECT * FROM mirae_api_keys WHERE key_hash=%s AND state='active'",[digest(key)]).fetchone() if key else None
     if not k:raise HTTPException(401,"Invalid or missing API key.")
@@ -709,7 +1064,11 @@ async def openai_chat(req:dict[str,Any],request:Request,authorization:str|None=H
     except Exception:pass
     prompt=[{"role":"system","content":system_prompt(ChatRequest(message=last),lang(last),sources,[])}]+[m for m in msgs if m.get("role") in ("system","user","assistant")]
     reply=await generate_once(prompt,float(req.get("temperature",.7)),min(int(req.get("max_tokens",2200)),3200))
-    with db() as c:c.execute("UPDATE mirae_api_keys SET last_used_at=now() WHERE id=%s",[k["id"]]);c.commit()
+    latency=int((time.perf_counter()-started)*1000)
+    with db() as c:
+        c.execute("UPDATE mirae_api_keys SET last_used_at=now() WHERE id=%s",[k["id"]])
+        c.execute("INSERT INTO mirae_api_usage(key_id,user_id,path,status,latency_ms) VALUES (%s,%s,%s,%s,%s)",[k["id"],k["user_id"],"/v1/chat/completions",200,latency]);c.commit()
+    await dispatch_webhook(k["user_id"],"api.request",{"path":"/v1/chat/completions","model":req.get("model","mirae-free"),"latency_ms":latency})
     return {"id":"mirae-chat","object":"chat.completion","created":int(time.time()),"model":req.get("model","mirae-free"),"choices":[{"index":0,"message":{"role":"assistant","content":reply},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"sources":sources}
 
 @app.get("/v1/models")
