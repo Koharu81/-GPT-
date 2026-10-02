@@ -312,7 +312,7 @@ function renderSources(e,sources){
 }
 function createAssistant(){
   const e=document.createElement("article");e.className="msg assistant";
-  e.innerHTML='<div class="msg-id"><div class="avatar">M</div><b class="msg-name">Mirae</b></div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">질문 분석 중</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
+  e.innerHTML='<div class="msg-id"><div class="avatar">M</div><b class="msg-name">Mirae</b></div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">처리 요약</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
   const process=e.querySelector(".process"),toggle=e.querySelector(".process-toggle");
   toggle.onclick=()=>{process.classList.toggle("expanded");toggle.querySelector(".process-chevron").textContent=process.classList.contains("expanded")?"⌃":"⌄"};
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});
@@ -331,8 +331,7 @@ function finish(box){
 }
 function restoreServer(rows,convs=[]){
   const by={},meta=Object.fromEntries(convs.map(x=>[x.id,x])),legacy=[];
-  const email=String(user?.email||profile.email||"").trim().toLowerCase();
-  const isEmailTitle=v=>{const s=String(v||"").trim().toLowerCase();return !!s&&(s===email||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s))};
+  const isEmailTitle=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||"").trim());
   for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),favorite:!!c.favorite,folder_id:c.folder_id||null,share_code:c.share_code||"",messages:[]};
   for(const x of rows){
     const id=String(x.conversation_id||"").trim();
@@ -342,24 +341,42 @@ function restoreServer(rows,convs=[]){
       by[id].messages.push(message);
     }else legacy.push({...message,created_at:x.created_at});
   }
+
   const groups=[];let g=null;
-  for(const m of legacy){if(m.role==="user"||!g){if(g?.messages?.length)groups.push(g);g={messages:[]}}g.messages.push(m)}
+  for(const m of legacy){
+    if(m.role==="user"||!g){
+      if(g?.messages?.length)groups.push(g);
+      g={messages:[],created_at:m.created_at};
+    }
+    g.messages.push(m);
+  }
   if(g?.messages?.length)groups.push(g);
+
   const empty=Object.values(by).filter(c=>!c.messages.length).sort((x,y)=>new Date(meta[x.id]?.created_at||0)-new Date(meta[y.id]?.created_at||0));
-  groups.forEach((group,i)=>{if(empty[i])empty[i].messages=group.messages});
+  groups.slice(0,empty.length).forEach((group,i)=>{empty[i].messages=group.messages});
+
+  const assigned=Math.min(groups.length,empty.length);
+  for(let i=assigned;i<groups.length;i++){
+    const group=groups[i];
+    const firstUser=group.messages.find(m=>m.role==="user");
+    const title=conversationTitle(firstUser?.content||group.messages[0]?.content||"새 대화");
+    const id="legacy-"+simpleHash(JSON.stringify(group.messages).slice(0,2000))+"-"+i;
+    by[id]={id,title,favorite:false,folder_id:null,share_code:"",messages:group.messages,updated_at:group.created_at};
+  }
+
   for(const c of Object.values(by)){
     if(isEmailTitle(c.title)){
       const firstUser=c.messages.find(m=>m.role==="user");
       c.title=conversationTitle(firstUser?.content||"새 대화");
     }
   }
-  const serverChats=Object.values(by).filter(c=>c.messages.length||!isEmailTitle(c.title)).sort((x,y)=>new Date(meta[y.id]?.updated_at||0)-new Date(meta[x.id]?.updated_at||0));
-  const localChats=(()=>{try{const raw=JSON.parse(localStorage.getItem("mirae-local")||"[]");return Array.isArray(raw)?raw:[]}catch{return[]}})();
-  const merged=[...serverChats];
+
+  const localChats=(()=>{try{const raw=JSON.parse(localStorage.getItem("mirae-local")||"[]");return Array.isArray(raw)?raw:[]}catch{return[]} })();
+  const merged=[...Object.values(by)];
   for(const old of localChats){
     if(old?.id&&!merged.some(c=>c.id===old.id)&&old.messages?.length)merged.push(old);
   }
-  chats=merged.sort((x,y)=>new Date(meta[y.id]?.updated_at||y.updated_at||0)-new Date(meta[x.id]?.updated_at||x.updated_at||0)).slice(0,100);
+  chats=merged.sort((x,y)=>new Date(meta[y.id]?.updated_at||y.updated_at||y.created_at||0)-new Date(meta[x.id]?.updated_at||x.updated_at||x.created_at||0)).slice(0,100);
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
@@ -458,18 +475,20 @@ function parseSSEBlock(block,box,state){
 }
 async function streamAsk(text,box){
   const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:2600,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
-  stage(box,"질문 분석");
+  stage(box,"요청 이해");
   const r=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
   if(!r.ok){
     const d=await r.json().catch(()=>({}));
     throw Error(d.detail||"AI API 요청에 실패했습니다.");
   }
-  stage(box,"답변 생성");
+  stage(box,"답변 구성");
   const d=await r.json();
   if(!d.reply||!String(d.reply).trim())throw Error("AI 서버가 답변을 반환하지 않았습니다.");
   if(d.sources?.length){
-    addProcessLog(box,"웹 검색 완료 · "+d.sources.length+"개 결과");
+    addProcessLog(box,"관련 정보 확인 · 웹 검색 "+d.sources.length+"개 결과");
     renderSources(box.e,d.sources);
+  }else{
+    addProcessLog(box,"관련 정보 확인 · 추가 검색 없음");
   }
   if(d.conversation_id)currentId=d.conversation_id;
   if(d.conversation_id&&d.conversation_id!==currentId)currentId=d.conversation_id;

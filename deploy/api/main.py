@@ -479,7 +479,7 @@ async def history(request:Request):
                               COALESCE(cv.title,'새 대화') AS conversation_title
                        FROM mirae_chat_history h
                        LEFT JOIN mirae_conversations cv ON cv.id=h.conversation_id
-                       WHERE h.user_id=%s ORDER BY h.created_at ASC LIMIT 600""",[u["id"]]).fetchall()
+                       WHERE h.user_id=%s ORDER BY h.created_at ASC LIMIT 5000""",[u["id"]]).fetchall()
     return r
 
 @app.get("/conversations")
@@ -487,10 +487,10 @@ async def conversations(request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
     with db() as c:
-        rows=c.execute("SELECT id,title,created_at,updated_at,favorite,folder_id,share_code FROM mirae_conversations WHERE user_id=%s ORDER BY favorite DESC,updated_at DESC LIMIT 100",[u["id"]]).fetchall()
+        rows=c.execute("SELECT id,title,created_at,updated_at,favorite,folder_id,share_code FROM mirae_conversations WHERE user_id=%s ORDER BY favorite DESC,updated_at DESC LIMIT 500",[u["id"]]).fetchall()
         for row in rows:
-            if row["title"]=="새 대화":
-                first=c.execute("SELECT content FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s ORDER BY created_at ASC,id ASC LIMIT 1",[u["id"],row["id"]]).fetchone()
+            if row["title"]=="새 대화" or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+",str(row["title"] or "").strip()):
+                first=c.execute("SELECT content FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s AND role='user' ORDER BY created_at ASC,id ASC LIMIT 1",[u["id"],row["id"]]).fetchone()
                 if first:
                     title=make_conversation_title(first["content"])
                     c.execute("UPDATE mirae_conversations SET title=%s WHERE id=%s AND user_id=%s",[title,row["id"],u["id"]]);row["title"]=title
