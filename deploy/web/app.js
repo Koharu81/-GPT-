@@ -197,18 +197,20 @@ function renderMessageAttachments(e,list){
 function openTool(id){$(id).classList.remove("hidden")}
 function closeTool(id){$(id).classList.add("hidden")}
 function setupTools(){
-  $("#canvasButton").onclick=()=>{openTool("#canvasOverlay");$("#canvasEditor").focus()};
-  $("#closeCanvas").onclick=()=>closeTool("#canvasOverlay");
-  $("#markdownButton").onclick=()=>{openTool("#markdownOverlay");$("#markdownEditor").value="";$("#markdownPreview").innerHTML=""};
-  $("#closeMarkdown").onclick=()=>closeTool("#markdownOverlay");
-  $("#markdownEditor").oninput=e=>$("#markdownPreview").innerHTML=renderMarkdown(e.target.value);
-  $("#canvasImprove").onclick=()=>{const v=$("#canvasEditor").value.trim();if(v)ask("다음 문서를 전문적이고 자연스럽게 다듬어줘.\n\n"+v)};
-  $("#canvasSummary").onclick=()=>{const v=$("#canvasEditor").value.trim();if(v)ask("다음 문서를 핵심만 요약해줘.\n\n"+v)};
-  $("#canvasMarkdown").onclick=()=>copyText($("#canvasEditor").value,$("#canvasMarkdown"));
-  $("#codeButton").onclick=()=>openTool("#codeOverlay");$("#closeCode").onclick=()=>closeTool("#codeOverlay");
-  $("#runCode").onclick=runBrowserCode;
-  $("#imageButton").onclick=()=>{const p=prompt("생성할 이미지 설명을 입력하세요.");if(p)ask("이미지를 생성해줘. 프롬프트: "+p)};
-  $("#voiceButton").onclick=toggleVoiceInput;
+  const on=(id,event,fn)=>{const el=$(id);if(el)el.addEventListener(event,fn)};
+  on("#canvasButton","click",()=>{openTool("#canvasOverlay");$("#canvasEditor").focus()});
+  on("#closeCanvas","click",()=>closeTool("#canvasOverlay"));
+  on("#markdownButton","click",()=>{openTool("#markdownOverlay");$("#markdownEditor").value="";$("#markdownPreview").innerHTML=""});
+  on("#closeMarkdown","click",()=>closeTool("#markdownOverlay"));
+  on("#markdownEditor","input",e=>$("#markdownPreview").innerHTML=renderMarkdown(e.target.value));
+  on("#canvasImprove","click",()=>{const v=$("#canvasEditor").value.trim();if(v)ask("다음 문서를 전문적이고 자연스럽게 다듬어줘.\n\n"+v)});
+  on("#canvasSummary","click",()=>{const v=$("#canvasEditor").value.trim();if(v)ask("다음 문서를 핵심만 요약해줘.\n\n"+v)});
+  on("#canvasMarkdown","click",()=>copyText($("#canvasEditor").value,$("#canvasMarkdown")));
+  on("#codeButton","click",()=>openTool("#codeOverlay"));
+  on("#closeCode","click",()=>closeTool("#codeOverlay"));
+  on("#runCode","click",runBrowserCode);
+  on("#imageButton","click",()=>{const p=prompt("생성할 이미지 설명을 입력하세요.");if(p)ask("이미지를 생성해줘. 프롬프트: "+p)});
+  on("#voiceButton","click",toggleVoiceInput);
 }
 async function runBrowserCode(){
   const lang=$("#codeLanguage").value,src=$("#codeEditor").value,out=$("#codeOutput");out.textContent="실행 중…";
@@ -274,15 +276,31 @@ function add(role,text,sources=[],feedbackKey="",messageAttachments=[]){
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});return e;
 }
 async function copyText(text,button){
-  try{await navigator.clipboard.writeText(text);button.textContent="복사됨";setTimeout(()=>button.textContent="복사",1200)}catch{button.textContent="복사 실패"}
+  try{
+    await navigator.clipboard.writeText(text);
+    button.setAttribute("aria-label","복사됨");
+    button.title="복사됨";
+    setTimeout(()=>{button.setAttribute("aria-label","복사");button.title="복사"},1200);
+  }catch{
+    button.setAttribute("aria-label","복사 실패");
+    button.title="복사 실패";
+  }
+}
+function actionIcon(name){
+  const icons={
+    copy:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>',
+    like:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v10H4V10h3Zm0 10h10.2a2 2 0 0 0 1.96-1.62l1.02-5.5A2 2 0 0 0 18.22 10H14l.65-3.25A2.2 2.2 0 0 0 12.5 4.1L7 10"></path></svg>',
+    dislike:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14V4H4v10h3Zm0-10h10.2a2 2 0 0 1 1.96 1.62l1.02 5.5A2 2 0 0 1 18.22 14H14l.65 3.25a2.2 2.2 0 0 1-2.15 2.65L7 14"></path></svg>',
+    speak:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"></path><path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10"></path></svg>'
+  };
+  return icons[name]||"";
 }
 function addMessageActions(e,key,text){
   const wrap=e.querySelector(".wrap");
   const actions=document.createElement("div");actions.className="message-actions";
-  const copy=document.createElement("button");copy.className="message-action";copy.textContent="복사";copy.onclick=()=>copyText(text,copy);
-  const like=document.createElement("button");like.className="message-action feedback";like.dataset.value="like";like.textContent="좋아요";
-  const speak=document.createElement("button");speak.className="message-action";speak.textContent="읽기";speak.onclick=()=>{if("speechSynthesis" in window){speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(text))}};
-  const dislike=document.createElement("button");dislike.className="message-action feedback";dislike.dataset.value="dislike";dislike.textContent="싫어요";
+  const copy=document.createElement("button");copy.className="message-action";copy.type="button";copy.innerHTML=actionIcon("copy");copy.setAttribute("aria-label","복사");copy.title="복사";copy.onclick=()=>copyText(text,copy);
+  const like=document.createElement("button");like.className="message-action feedback";like.type="button";like.dataset.value="like";like.innerHTML=actionIcon("like");like.setAttribute("aria-label","좋아요");like.title="좋아요";
+  const dislike=document.createElement("button");dislike.className="message-action feedback";dislike.type="button";dislike.dataset.value="dislike";dislike.innerHTML=actionIcon("dislike");dislike.setAttribute("aria-label","싫어요");dislike.title="싫어요";
   [like,dislike].forEach(btn=>btn.onclick=async()=>{actions.querySelectorAll(".feedback").forEach(x=>x.classList.remove("selected"));btn.classList.add("selected");if(user)try{await req("/feedback",{method:"PUT",body:JSON.stringify({feedback:btn.dataset.value,message_hash:key,conversation_id:currentId})})}catch{}});
   actions.append(copy,like,dislike);wrap.appendChild(actions);
 }
@@ -313,6 +331,8 @@ function finish(box){
 }
 function restoreServer(rows,convs=[]){
   const by={},meta=Object.fromEntries(convs.map(x=>[x.id,x])),legacy=[];
+  const email=String(user?.email||profile.email||"").trim().toLowerCase();
+  const isEmailTitle=v=>{const s=String(v||"").trim().toLowerCase();return !!s&&(s===email||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s))};
   for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),favorite:!!c.favorite,folder_id:c.folder_id||null,share_code:c.share_code||"",messages:[]};
   for(const x of rows){
     const id=String(x.conversation_id||"").trim();
@@ -327,7 +347,19 @@ function restoreServer(rows,convs=[]){
   if(g?.messages?.length)groups.push(g);
   const empty=Object.values(by).filter(c=>!c.messages.length).sort((x,y)=>new Date(meta[x.id]?.created_at||0)-new Date(meta[y.id]?.created_at||0));
   groups.forEach((group,i)=>{if(empty[i])empty[i].messages=group.messages});
-  chats=Object.values(by).sort((x,y)=>new Date(meta[y.id]?.updated_at||0)-new Date(meta[x.id]?.updated_at||0)).slice(0,100);
+  for(const c of Object.values(by)){
+    if(isEmailTitle(c.title)){
+      const firstUser=c.messages.find(m=>m.role==="user");
+      c.title=conversationTitle(firstUser?.content||"새 대화");
+    }
+  }
+  const serverChats=Object.values(by).filter(c=>c.messages.length||!isEmailTitle(c.title)).sort((x,y)=>new Date(meta[y.id]?.updated_at||0)-new Date(meta[x.id]?.updated_at||0));
+  const localChats=(()=>{try{const raw=JSON.parse(localStorage.getItem("mirae-local")||"[]");return Array.isArray(raw)?raw:[]}catch{return[]}})();
+  const merged=[...serverChats];
+  for(const old of localChats){
+    if(old?.id&&!merged.some(c=>c.id===old.id)&&old.messages?.length)merged.push(old);
+  }
+  chats=merged.sort((x,y)=>new Date(meta[y.id]?.updated_at||y.updated_at||0)-new Date(meta[x.id]?.updated_at||x.updated_at||0)).slice(0,100);
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
@@ -690,7 +722,7 @@ $("#skillForm").onsubmit=async e=>{
 };
 $("#attachButton").onclick=()=>$("#fileInput").click();
 $("#fileInput").onchange=e=>{addFiles(e.target.files);e.target.value=""};
-$("#chartButton").onclick=()=>{const input=$("#input");if(!input.value.trim())input.value="아래 숫자 데이터를 적절한 차트/그래프로 시각화해줘.\n\n";input.focus();input.dispatchEvent(new Event("input"));$("#globalStatus").textContent="차트 모드는 항상 사용 가능합니다.";};
+if($("#chartButton"))$("#chartButton").onclick=()=>{const input=$("#input");if(!input.value.trim())input.value="아래 숫자 데이터를 적절한 차트/그래프로 시각화해줘.\n\n";input.focus();input.dispatchEvent(new Event("input"));};
 $("#form").onsubmit=e=>{e.preventDefault();ask($("#input").value)};
 $("#input").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(e.target.value)}};
 $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,160)+"px"};
