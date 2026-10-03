@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 from io import BytesIO
 import zipfile
 
-APP_VERSION="6.3.0"
+APP_VERSION="6.4.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
@@ -34,8 +34,10 @@ NEWS_RSS="https://news.google.com/rss/search"
 RESEND_API_KEY=os.getenv("RESEND_API_KEY","")
 RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
 RESEND_URL="https://api.resend.com/emails"
+CLOUDFLARE_ACCOUNT_ID=os.getenv("CLOUDFLARE_ACCOUNT_ID","").strip()
+CLOUDFLARE_API_TOKEN=os.getenv("CLOUDFLARE_API_TOKEN","").strip()
+CLOUDFLARE_IMAGE_MODEL=os.getenv("CLOUDFLARE_IMAGE_MODEL","@cf/stabilityai/stable-diffusion-xl-base-1.0").strip()
 POLLINATIONS_API_KEY=os.getenv("POLLINATIONS_API_KEY","").strip()
-POLLINATIONS_IMAGE_MODEL=os.getenv("POLLINATIONS_IMAGE_MODEL","black-forest-labs/flux.1-schnell").strip()
 POLLINATIONS_VISION_MODEL=os.getenv("POLLINATIONS_VISION_MODEL","google/gemini-3-flash-preview").strip()
 SESSION_DAYS=30
 
@@ -356,24 +358,63 @@ async def extract_files(files:list[UploadFile]=File(...)):
         out.append({"name":f.filename or "file","type":f.content_type or "application/octet-stream","size":len(data),"text":text[:200000],"chunks":chunks[:100],"chunk_count":len(chunks),"truncated":len(text)>200000})
     return {"files":out}
 
+async def translate_image_prompt(prompt:str)->str:
+    text=str(prompt or "").strip()
+    if not text or not re.search(r"[가-힣]",text):return text
+    try:
+        from googletrans import Translator
+        async with Translator(service_urls=["translate.googleapis.com"]) as translator:
+            translated=await translator.translate(text,dest="en")
+        return str(translated.text or text).strip() or text
+    except Exception:
+        return text
+
 @app.post("/images/generate")
 async def generate_image(data:dict[str,Any],request:Request):
     if not session_user(request):raise HTTPException(401,"로그인이 필요합니다.")
     prompt=str(data.get("prompt","")).strip()
     if not prompt:raise HTTPException(400,"이미지 프롬프트가 필요합니다.")
     if len(prompt)>4000:raise HTTPException(400,"이미지 프롬프트는 4000자까지 입력할 수 있습니다.")
-    if not POLLINATIONS_API_KEY:
-        raise HTTPException(503,"이미지 생성 서버가 설정되지 않았습니다. API 서버 환경변수에 이미지 생성 키를 등록해주세요.")
+    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
+        raise HTTPException(503,"이미지 생성 서버가 설정되지 않았습니다. API 서버 환경변수를 확인해주세요.")
+    translated_prompt=await translate_image_prompt(prompt)
+    payload={
+        "prompt":translated_prompt,
+        "num_steps":20,
+        "guidance":7.5,
+        "width":1024,
+        "height":1024,
+    }
+    url=f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
     try:
         async with httpx.AsyncClient(timeout=180,trust_env=False) as x:
-            r=await x.post("https://gen.pollinations.ai/v1/images/generations",headers={"Authorization":"Bearer "+POLLINATIONS_API_KEY,"Content-Type":"application/json"},json={"model":POLLINATIONS_IMAGE_MODEL,"prompt":prompt,"response_format":"url"})
-            if r.status_code>=400:raise HTTPException(502,"이미지 생성 서비스가 요청을 거부했습니다.")
-            body=r.json();item=(body.get("data") or [{}])[0];url=item.get("url")
-            if not url and item.get("b64_json"):url="data:image/png;base64,"+item["b64_json"]
-            if not url:raise HTTPException(502,"이미지 생성 결과가 없습니다.")
-            return {"ok":True,"url":url,"model":POLLINATIONS_IMAGE_MODEL}
+            r=await x.post(url,headers={"Authorization":f"Bearer {CLOUDFLARE_API_TOKEN}","Content-Type":"application/json"},json=payload)
+            if r.status_code>=400:
+                raise HTTPException(502,"Cloudflare 이미지 생성 서비스가 요청을 거부했습니다.")
+            content_type=(r.headers.get("content-type") or "").lower()
+            image_bytes=b""
+            if "image/" in content_type:
+                image_bytes=r.content
+            else:
+                try:
+                    body=r.json()
+                    result=body.get("result") if isinstance(body,dict) else None
+                    if isinstance(result,str):
+                        image_bytes=base64.b64decode(result)
+                    elif isinstance(result,dict):
+                        encoded=result.get("image") or result.get("image_b64") or result.get("b64_json")
+                        if encoded:image_bytes=base64.b64decode(encoded)
+                except Exception:pass
+            if not image_bytes:raise HTTPException(502,"Cloudflare 이미지 생성 결과가 없습니다.")
+            return {
+                "ok":True,
+                "url":"data:image/png;base64,"+base64.b64encode(image_bytes).decode(),
+                "model":CLOUDFLARE_IMAGE_MODEL,
+                "prompt":prompt,
+                "translated_prompt":translated_prompt,
+            }
     except HTTPException:raise
-    except Exception as e:raise HTTPException(502,"이미지 생성 요청에 실패했습니다: "+type(e).__name__)
+    except Exception as e:raise HTTPException(502,"Cloudflare 이미지 생성 요청에 실패했습니다: "+type(e).__name__)
 
 @app.post("/vision")
 async def understand_image(file:UploadFile=File(...),request:Request=None):
