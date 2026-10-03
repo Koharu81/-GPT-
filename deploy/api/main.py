@@ -14,8 +14,39 @@ from psycopg.types.json import Jsonb
 from io import BytesIO
 import zipfile
 
-APP_VERSION="6.4.0"
+APP_VERSION="6.5.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
+ADMIN_EMAIL="admin@koharu.live"
+def request_ip(request:Request): return (request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "") or "").strip()
+def request_location(request:Request): return {"city":request.headers.get("cf-ipcity","").strip(),"region":request.headers.get("cf-region","").strip(),"country":request.headers.get("cf-ipcountry","").strip()}
+def is_admin(request:Request):
+    u=session_user(request); return bool(u and str(u.get("email","")).lower()==ADMIN_EMAIL)
+def require_admin(request:Request):
+    if not is_admin(request): raise HTTPException(403,"관리자 권한이 필요합니다.")
+    return session_user(request)
+@app.middleware("http")
+async def access_audit(request:Request,call_next):
+    started=time.perf_counter(); response=None
+    try:
+        response=await call_next(request); return response
+    finally:
+        try:
+            path=request.url.path; status=response.status_code if response else 500
+            if path not in {"/health","/openapi.json","/docs","/redoc"}:
+                u=session_user(request); loc=request_location(request); risk="normal"
+                if status in {401,403}: risk="auth_failure" if path.startswith("/auth/") else "permission_denied"
+                elif status==429: risk="rate_limit"
+                elif status>=500: risk="server_error"
+                elif status>=400: risk="bad_request"
+                with db() as c:
+                    c.execute("""INSERT INTO mirae_access_logs
+                        (user_id,email,nickname,ip,country,region,city,path,method,status,risk_category,risk_detail,user_agent,latency_ms)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        [u["id"] if u else None,u["email"] if u else "",u["name"] if u else "",request_ip(request),
+                         loc["country"],loc["region"],loc["city"],path,request.method,status,risk,
+                         ("" if risk=="normal" else "HTTP "+str(status)),request.headers.get("user-agent","")[:1000],
+                         int((time.perf_counter()-started)*1000)]); c.commit()
+        except Exception: pass
 app.add_middleware(CORSMiddleware,allow_origins=["https://gpt-phi-cyan.vercel.app","https://mirae.koharu.live"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 @app.get("/docs",include_in_schema=False)
@@ -116,8 +147,10 @@ def lang(t:str):
 
 def wants_web(t:str)->bool:
     text=str(t or "").strip()
-    if not text or GREETING_ONLY.fullmatch(text):return False
-    return bool(WEB_EXPLICIT.search(text) or WEB_FRESH.search(text) or WEB_CONTEXT.search(text))
+    if not text or GREETING_ONLY.fullmatch(text): return False
+    if WEB_EXPLICIT.search(text) or WEB_FRESH.search(text) or WEB_CONTEXT.search(text): return True
+    if len(text)>=8 and not text.startswith(("/plugin","/skill")): return True
+    return False
 
 def clean_query(t:str)->str:
     t=re.sub(r"(검색해줘|검색해|찾아줘|찾아봐|찾아서|알려줘|알려 줘|정리해줘|정리해 줘|알려|찾아|검색|조회해줘|조회해|확인해줘|확인해|최신|현재|지금|최근|실시간|오늘|어제|내일|이번\s*(?:주|달)|소식|뉴스|정보)"," ",t,flags=re.I)
@@ -148,7 +181,7 @@ async def search_web(t:str):
         out.append({"title":title,"url":link,"published":pub,"snippet":" ".join(desc.split())[:700]})
     out.sort(key=lambda x:relevance(q,x),reverse=True)
     scored=[x for x in out if relevance(q,x)>0]
-    return scored[:5]
+    return scored[:8]
 
 def system_prompt(req,language,sources,skills,memories=None,profile_data=None,attachments=None):
     rule={"ko":"한국어로 자연스럽게 답하세요. 사용자가 요청하지 않는 한 다른 언어를 섞지 마세요.","ja":"自然な日本語で答えてください。","en":"Answer in natural English unless the user requests another language."}[language]
@@ -292,6 +325,16 @@ def init_db():
             name TEXT NOT NULL,url TEXT NOT NULL,events JSONB NOT NULL DEFAULT '["api.request"]'::jsonb,
             active BOOLEAN NOT NULL DEFAULT true,created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_webhooks_user_idx ON mirae_webhooks(user_id)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_access_logs(
+            id BIGSERIAL PRIMARY KEY,user_id BIGINT REFERENCES mirae_users(id) ON DELETE SET NULL,
+            email TEXT NOT NULL DEFAULT '',nickname TEXT NOT NULL DEFAULT '',ip TEXT NOT NULL DEFAULT '',
+            country TEXT NOT NULL DEFAULT '',region TEXT NOT NULL DEFAULT '',city TEXT NOT NULL DEFAULT '',
+            path TEXT NOT NULL,method TEXT NOT NULL,status INTEGER NOT NULL,
+            risk_category TEXT NOT NULL DEFAULT 'normal',risk_detail TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',latency_ms INTEGER NOT NULL DEFAULT 0,created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_access_logs_created_idx ON mirae_access_logs(created_at DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_access_logs_risk_idx ON mirae_access_logs(risk_category,created_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_admin_settings(key TEXT PRIMARY KEY,value JSONB NOT NULL DEFAULT '{}'::jsonb,updated_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_feedback(
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
@@ -369,53 +412,43 @@ async def translate_image_prompt(prompt:str)->str:
     except Exception:
         return text
 
-@app.post("/images/generate")
-async def generate_image(data:dict[str,Any],request:Request):
-    if not session_user(request):raise HTTPException(401,"로그인이 필요합니다.")
-    prompt=str(data.get("prompt","")).strip()
-    if not prompt:raise HTTPException(400,"이미지 프롬프트가 필요합니다.")
-    if len(prompt)>4000:raise HTTPException(400,"이미지 프롬프트는 4000자까지 입력할 수 있습니다.")
-    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
-        raise HTTPException(503,"이미지 생성 서버가 설정되지 않았습니다. API 서버 환경변수를 확인해주세요.")
+async def generate_image_payload(prompt:str):
+    prompt=str(prompt or "").strip()
+    if not prompt: raise HTTPException(400,"이미지 프롬프트가 필요합니다.")
+    if len(prompt)>4000: raise HTTPException(400,"이미지 프롬프트는 4000자까지 입력할 수 있습니다.")
+    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN: raise HTTPException(503,"이미지 생성 서버가 설정되지 않았습니다.")
     translated_prompt=await translate_image_prompt(prompt)
-    payload={
-        "prompt":translated_prompt,
-        "num_steps":20,
-        "guidance":7.5,
-        "width":1024,
-        "height":1024,
-    }
-    url=f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
+    payload={"prompt":translated_prompt,"num_steps":20,"guidance":7.5,"width":1024,"height":1024}
+    url="https://api.cloudflare.com/client/v4/accounts/"+CLOUDFLARE_ACCOUNT_ID+"/ai/run/"+CLOUDFLARE_IMAGE_MODEL
     try:
         async with httpx.AsyncClient(timeout=180,trust_env=False) as x:
-            r=await x.post(url,headers={"Authorization":f"Bearer {CLOUDFLARE_API_TOKEN}","Content-Type":"application/json"},json=payload)
-            if r.status_code>=400:
-                raise HTTPException(502,"Cloudflare 이미지 생성 서비스가 요청을 거부했습니다.")
-            content_type=(r.headers.get("content-type") or "").lower()
-            image_bytes=b""
-            if "image/" in content_type:
-                image_bytes=r.content
-            else:
+            r=await x.post(url,headers={"Authorization":"Bearer "+CLOUDFLARE_API_TOKEN,"Content-Type":"application/json"},json=payload)
+            if r.status_code>=400: raise HTTPException(502,"Cloudflare 이미지 생성 서비스 요청이 거부되었습니다.")
+            image_bytes=r.content if "image/" in (r.headers.get("content-type") or "").lower() else b""
+            if not image_bytes:
                 try:
-                    body=r.json()
-                    result=body.get("result") if isinstance(body,dict) else None
-                    if isinstance(result,str):
-                        image_bytes=base64.b64decode(result)
+                    body=r.json(); result=body.get("result") if isinstance(body,dict) else None
+                    if isinstance(result,str): image_bytes=base64.b64decode(result)
                     elif isinstance(result,dict):
                         encoded=result.get("image") or result.get("image_b64") or result.get("b64_json")
                         if encoded:image_bytes=base64.b64decode(encoded)
-                except Exception:pass
-            if not image_bytes:raise HTTPException(502,"Cloudflare 이미지 생성 결과가 없습니다.")
-            return {
-                "ok":True,
-                "url":"data:image/png;base64,"+base64.b64encode(image_bytes).decode(),
-                "model":CLOUDFLARE_IMAGE_MODEL,
-                "prompt":prompt,
-                "translated_prompt":translated_prompt,
-            }
-    except HTTPException:raise
-    except Exception as e:raise HTTPException(502,"Cloudflare 이미지 생성 요청에 실패했습니다: "+type(e).__name__)
-
+                except Exception: pass
+            if not image_bytes: raise HTTPException(502,"Cloudflare 이미지 생성 결과가 없습니다.")
+            return {"ok":True,"url":"data:image/png;base64,"+base64.b64encode(image_bytes).decode(),"model":CLOUDFLARE_IMAGE_MODEL,"prompt":prompt,"translated_prompt":translated_prompt}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(502,"Cloudflare 이미지 생성 요청에 실패했습니다: "+type(e).__name__)
+async def classify_image_intent(message:str):
+    text=str(message or "").strip()
+    if not text:return {"generate":False,"prompt":""}
+    msgs=[{"role":"system","content":"Decide from meaning, not keywords, whether the user asks Mirae to CREATE an image. Return ONLY JSON with generate boolean and prompt string. Existing-image analysis/editing is not generation."},{"role":"user","content":text[:4000]}]
+    try:
+        raw=await generate_once(msgs,0.0,100); m=re.search(r"\{.*\}",raw,re.S); obj=json.loads(m.group(0)) if m else {}
+        return {"generate":bool(obj.get("generate")),"prompt":str(obj.get("prompt") or text)[:4000]}
+    except Exception:return {"generate":False,"prompt":""}
+@app.post("/images/generate")
+async def generate_image(data:dict[str,Any],request:Request):
+    if not session_user(request): raise HTTPException(401,"로그인이 필요합니다.")
+    return await generate_image_payload(str(data.get("prompt","")))
 @app.post("/vision")
 async def understand_image(file:UploadFile=File(...),request:Request=None):
     if not session_user(request):raise HTTPException(401,"로그인이 필요합니다.")
@@ -713,6 +746,40 @@ def auto_register_memory(uid:int,message:str):
             if not exists:
                 c.execute("INSERT INTO mirae_memories(user_id,content) VALUES (%s,%s)",[uid,content]);c.commit()
 
+
+@app.get("/admin/overview")
+async def admin_overview(request:Request):
+    require_admin(request)
+    with db() as c:
+        users=c.execute("SELECT COUNT(*) AS count FROM mirae_users").fetchone()["count"]
+        active=c.execute("SELECT COUNT(*) AS count FROM mirae_sessions WHERE expires_at>now()").fetchone()["count"]
+        logs=c.execute("SELECT COUNT(*) AS count FROM mirae_access_logs WHERE created_at>=now()-interval '24 hours'").fetchone()["count"]
+        risks=c.execute("SELECT risk_category,COUNT(*) AS count FROM mirae_access_logs WHERE risk_category<>'normal' AND created_at>=now()-interval '7 days' GROUP BY risk_category ORDER BY count DESC").fetchall()
+    return {"users":users,"active_sessions":active,"access_24h":logs,"risks":risks}
+@app.get("/admin/users")
+async def admin_users(request:Request):
+    require_admin(request)
+    with db() as c:return c.execute("SELECT u.id,u.email,u.name,u.created_at,u.email_verified,(SELECT max(created_at) FROM mirae_access_logs l WHERE l.user_id=u.id) AS last_access FROM mirae_users u ORDER BY u.created_at DESC LIMIT 500").fetchall()
+@app.get("/admin/logs")
+async def admin_logs(request:Request,category:str="",limit:int=200):
+    require_admin(request); limit=max(1,min(limit,500))
+    with db() as c:
+        if category:return c.execute("SELECT id,email,nickname,ip,country,region,city,path,method,status,risk_category,risk_detail,user_agent,latency_ms,created_at FROM mirae_access_logs WHERE risk_category=%s ORDER BY created_at DESC LIMIT %s",[category,limit]).fetchall()
+        return c.execute("SELECT id,email,nickname,ip,country,region,city,path,method,status,risk_category,risk_detail,user_agent,latency_ms,created_at FROM mirae_access_logs ORDER BY created_at DESC LIMIT %s",[limit]).fetchall()
+@app.get("/admin/settings")
+async def admin_settings(request:Request):
+    require_admin(request); defaults={"web_search_mode":"broad","image_generation":True,"maintenance":False,"log_retention_days":90}
+    with db() as c:
+        for r in c.execute("SELECT key,value FROM mirae_admin_settings ORDER BY key").fetchall(): defaults[r["key"]]=r["value"]
+    return defaults
+@app.put("/admin/settings")
+async def admin_settings_update(data:dict[str,Any],request:Request):
+    require_admin(request); allowed={"web_search_mode","image_generation","maintenance","log_retention_days"}
+    with db() as c:
+        for k,v in data.items():
+            if k in allowed:c.execute("""INSERT INTO mirae_admin_settings(key,value,updated_at) VALUES (%s,%s,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()""",[k,Jsonb(v)])
+        c.commit()
+    return await admin_settings(request)
 @app.get("/memories")
 async def list_memories(request:Request):
     u=session_user(request)
@@ -1025,13 +1092,22 @@ async def chat(req:ChatRequest,request:Request):
             if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
         else:cid=""
         return {"reply":reply,"model":"skill","language":lang(req.message),"sources":[]}
-    u,sources,msgs,need=await prepare(req,request);reply=await generate_once(msgs,req.temperature,req.max_tokens)
+    u,sources,msgs,need=await prepare(req,request)
+    image_intent=await classify_image_intent(req.message)
+    if image_intent["generate"]:
+        image=await generate_image_payload(image_intent["prompt"]); reply="이미지를 생성했습니다."; cid=""
+        if u:
+            cid=save_chat(u["id"],req.message,reply,"image",[],req.conversation_id or "")
+            if current_title_missing(u["id"],cid): await finalize_conversation(u["id"],cid,req.message)
+        return {"reply":reply,"model":CLOUDFLARE_IMAGE_MODEL,"language":lang(req.message),"sources":sources,"conversation_id":cid,"image":image,"reasoning_summary":"요청의 의미를 분석해 이미지 생성 의도로 판단하고 이미지 프롬프트를 구성했습니다."}
+    reply=await generate_once(msgs,req.temperature,req.max_tokens)
     cid=""
     if u:
         cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
         if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
         asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
-    return {"reply":reply,"model":MODEL_NAME,"language":lang(req.message),"sources":sources,"conversation_id":cid}
+    return {"reply":reply,"model":MODEL_NAME,"language":lang(req.message),"sources":sources,"conversation_id":cid,
+            "reasoning_summary":("웹 검색 결과를 확인한 뒤 답변을 구성했습니다." if sources else "질문의 핵심을 파악하고 필요한 맥락을 반영해 답변을 구성했습니다.")}
 
 @app.post("/chat/stream")
 async def chat_stream(req:ChatRequest,request:Request):

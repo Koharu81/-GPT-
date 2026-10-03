@@ -503,6 +503,15 @@ async function streamAsk(text,box){
   }
   stage(box,"답변 구성");
   const d=await r.json();
+  if(d.reasoning_summary) addProcessLog(box,"추론 요약 · "+String(d.reasoning_summary).slice(0,240));
+  if(d.image?.url){
+    box.raw="";
+    box.bubble.innerHTML="<div class='generated-image'><img src='"+escapeHtml(d.image.url)+"' alt='생성된 이미지' loading='lazy'><a href='"+escapeHtml(d.image.url)+"' target='_blank' rel='noopener noreferrer'>이미지 열기</a></div>";
+    addProcessLog(box,"이미지 생성 완료");
+    if(d.conversation_id)currentId=d.conversation_id;
+    finish(box);
+    return {reply:d.reply||"이미지를 생성했습니다.",sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle,image:d.image};
+  }
   if(!d.reply||!String(d.reply).trim())throw Error("AI 서버가 답변을 반환하지 않았습니다.");
   if(d.sources?.length){
     addProcessLog(box,"관련 정보 확인 · 웹 검색 "+d.sources.length+"개 결과");
@@ -541,7 +550,7 @@ async function generateImage(prompt){
 }
 async function ask(text){
   text=text.trim();if(!text&&!attachments.length)return;
-  if(/^(?:이미지|그림)\s*(?:생성|그려|만들어)/i.test(text))return generateImage(text);
+
   if(!text&&attachments.length)text="첨부한 파일을 분석해줘.";
   const sentAttachments=attachments.map(a=>({...a}));
   attachments=[];renderAttachmentStrip();
